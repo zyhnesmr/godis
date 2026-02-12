@@ -1,0 +1,106 @@
+// Copyright 2024 The Godis Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package command
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/zyhnesmr/godis/internal/database"
+	"github.com/zyhnesmr/godis/internal/net"
+	"github.com/zyhnesmr/godis/internal/protocol/resp"
+)
+
+// Dispatcher dispatches commands to their handlers
+type Dispatcher struct {
+	commands map[string]*Command
+	mu       sync.RWMutex
+	db       *database.DBSelector
+}
+
+// NewDispatcher creates a new command dispatcher
+func NewDispatcher(db *database.DBSelector) *Dispatcher {
+	return &Dispatcher{
+		commands: make(map[string]*Command),
+		db:       db,
+	}
+}
+
+// Register registers a new command
+func (d *Dispatcher) Register(cmd *Command) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.commands[strings.ToLower(cmd.Name)] = cmd
+}
+
+// Get returns a command by name
+func (d *Dispatcher) Get(name string) (*Command, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	cmd, ok := d.commands[strings.ToLower(name)]
+	return cmd, ok
+}
+
+// Dispatch dispatches a command to its handler
+func (d *Dispatcher) Dispatch(ctx context.Context, conn *net.Conn, cmdName string, args []string) ([]byte, error) {
+	// Find command
+	cmd, ok := d.Get(cmdName)
+	if !ok {
+		return resp.BuildErrorString(fmt.Sprintf("ERR unknown command '%s'", cmdName)), nil
+	}
+
+	// Check arity
+	if err := cmd.CheckArity(len(args)); err != nil {
+		return resp.BuildErrorString(err.Error()), nil
+	}
+
+	// Get database for this connection
+	db, err := d.db.GetDB(conn.GetDB())
+	if err != nil {
+		return resp.BuildErrorString("ERR invalid DB index"), nil
+	}
+
+	// Create command context
+	cmdCtx := &Context{
+		DB:      db,
+		Conn:    conn,
+		CmdName: cmdName,
+		Args:    args,
+	}
+
+	// Execute command
+	reply, err := cmd.Handler(cmdCtx)
+	if err != nil {
+		return resp.BuildErrorString(err.Error()), nil
+	}
+
+	return reply.Marshal(), nil
+}
+
+// ProcessCommand processes a command (compatibility interface)
+func (d *Dispatcher) ProcessCommand(ctx context.Context, conn *net.Conn, cmdName string, args []string) ([]byte, error) {
+	return d.Dispatch(ctx, conn, cmdName, args)
+}
+
+// Commands returns all registered commands
+func (d *Dispatcher) Commands() map[string]*Command {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	result := make(map[string]*Command, len(d.commands))
+	for k, v := range d.commands {
+		result[k] = v
+	}
+	return result
+}
+
+// GetDB returns the database selector
+func (d *Dispatcher) GetDB() *database.DBSelector {
+	return d.db
+}
