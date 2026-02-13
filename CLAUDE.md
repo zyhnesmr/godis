@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (10/24 核心任务)
+### ✅ 已完成模块 (11/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -19,13 +19,13 @@
 | Server 命令 | ✅ | PING, ECHO, INFO, DBSIZE, TIME |
 | 命令分发器 | ✅ | Dispatcher, Reply, Command |
 | 主入口和工具 | ✅ | main.go, Makefile, build.sh |
+| Hash 数据结构 | ✅ | HSET, HGET, HMGET, HDEL, HEXISTS, HINCRBY 等 |
+| List 数据结构 | ✅ | LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN 等 |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| Hash 数据结构 | 高 | HSET, HGET, HGETALL, HDEL, HEXISTS, HINCRBY... |
-| List 数据结构 | 高 | LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN... |
 | Set 数据结构 | 高 | SADD, SMEMBERS, SISMEMBER, SUNION... |
 | ZSet 数据结构 | 高 | ZADD, ZRANGE, ZSCORE, ZRANK... |
 | 过期机制 | 中 | 时间轮实现，主动/被动过期 |

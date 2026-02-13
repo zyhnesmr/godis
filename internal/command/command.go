@@ -162,6 +162,14 @@ func NewNilReply() *Reply {
 	}
 }
 
+// NewArrayReplyFromAny creates an array reply from interface{} slice
+func NewArrayReplyFromAny(items []interface{}) *Reply {
+	return &Reply{
+		Type:  ReplyTypeArray,
+		Value: items,
+	}
+}
+
 // IsNil returns true if the reply is nil
 func (r *Reply) IsNil() bool {
 	return r == nil || r.Type == ReplyTypeNil
@@ -211,6 +219,27 @@ func (r *Reply) Marshal() []byte {
 			return builder.Bytes()
 		case []string:
 			return resp.BuildStringArray(v)
+		case []interface{}:
+			if len(v) == 0 {
+				return resp.BuildEmptyArray()
+			}
+			builder := resp.NewResponseBuilder()
+			builder.WriteArray(len(v))
+			for _, item := range v {
+				switch val := item.(type) {
+				case nil:
+					builder.WriteBytes(resp.BuildNil())
+				case string:
+					builder.WriteBulkStringFromString(val)
+				case int64:
+					builder.WriteInteger(val)
+				case int:
+					builder.WriteInteger(int64(val))
+				default:
+					builder.WriteBulkStringFromString(fmt.Sprintf("%v", val))
+				}
+			}
+			return builder.Bytes()
 		default:
 			return resp.BuildEmptyArray()
 		}
@@ -235,28 +264,27 @@ func (c *Command) HasFlag(flag string) bool {
 func (c *Command) CheckArity(argc int) error {
 	// Arity in Redis includes the command name, but our argc doesn't
 	// So we need to adjust: expected args = Arity - 1 (or -Arity - 1 for negative)
-	expected := c.Arity
-	if expected > 0 {
-		expected = expected - 1
-	} else if expected < 0 {
-		expected = -expected - 1
-		// If OptionalFirstArg is set, allow 0 args when minArgs is 0
-		if c.OptionalFirstArg && expected == 0 && argc == 0 {
-			return nil
-		}
-	}
+	arity := c.Arity
 
-	if expected >= 0 {
+	if arity > 0 {
+		// Exact number of arguments required
+		expected := arity - 1
 		if argc != expected {
 			return fmt.Errorf("wrong number of arguments for '%s' command", c.Name)
 		}
-	} else {
-		// expected is negative, meaning at least -expected args
-		minArgs := -expected
+	} else if arity < 0 {
+		// At least -arity arguments required (minimum)
+		minArgs := -arity - 1
+		// If OptionalFirstArg is set, allow 0 args when minArgs is 0
+		if c.OptionalFirstArg && minArgs == 0 && argc == 0 {
+			return nil
+		}
 		if argc < minArgs {
 			return fmt.Errorf("wrong number of arguments for '%s' command", c.Name)
 		}
 	}
+	// arity == 0 means no arguments (or variable number of arguments)
+
 	return nil
 }
 

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/zyhnesmr/godis/internal/datastruct/hash"
+	"github.com/zyhnesmr/godis/internal/datastruct/list"
 )
 
 // ObjType represents the object type
@@ -358,5 +361,35 @@ func (o *Object) Size() int64 {
 		return int64(len(v))
 	default:
 		return 16 // Base object size
+	}
+}
+
+// NewHashObject creates a hash object
+func NewHashObject() *Object {
+	h := hash.NewHash()
+	return &Object{
+		Type:     ObjTypeHash,
+		Encoding: ObjEncodingHashtable,
+		Ptr:      h,
+		LRU:      uint32(time.Now().Unix()),
+	}
+}
+
+// GetHash returns the hash value if object is a hash
+func (o *Object) GetHash() (interface{}, bool) {
+	if o == nil || o.Type != ObjTypeHash {
+		return nil, false
+	}
+	return o.Ptr, true
+}
+
+// NewListObject creates a list object
+func NewListObject() *Object {
+	l := list.NewList()
+	return &Object{
+		Type:     ObjTypeList,
+		Encoding: ObjEncodingLinkedList,
+		Ptr:      l,
+		LRU:      uint32(time.Now().Unix()),
 	}
 }

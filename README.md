@@ -108,6 +108,19 @@ godis/
 - FLUSHDB, FLUSHALL
 - SCAN
 
+### Hash 命令
+- HSET, HGET, HMGET, HSETNX
+- HGETALL, HKEYS, HVALS, HLEN
+- HDEL, HEXISTS
+- HINCRBY, HINCRBYFLOAT
+- HSTRLEN, HRANDFIELD
+
+### List 命令
+- LPUSH, RPUSH, LPOP, RPOP
+- LLEN, LINDEX, LSET
+- LRANGE, LTRIM
+- LREM, LINSERT
+
 ### 配置
 
 配置文件位于 `config/godis.conf`，主要配置项:

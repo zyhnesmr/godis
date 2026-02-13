@@ -88,5 +88,11 @@ func registerCommands(disp *command.Dispatcher) {
 	// Register string commands
 	commands.RegisterStringCommands(disp)
 
+	// Register hash commands
+	commands.RegisterHashCommands(disp)
+
+	// Register list commands
+	commands.RegisterListCommands(disp)
+
 	log.Info("Registered %d commands", len(disp.Commands()))
 }
