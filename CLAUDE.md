@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (11/24 核心任务)
+### ✅ 已完成模块 (13/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -21,13 +21,13 @@
 | 主入口和工具 | ✅ | main.go, Makefile, build.sh |
 | Hash 数据结构 | ✅ | HSET, HGET, HMGET, HDEL, HEXISTS, HINCRBY 等 |
 | List 数据结构 | ✅ | LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN 等 |
+| Set 数据结构 | ✅ | SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SPOP, SRANDMEMBER, SMOVE, SINTER, SUNION, SDIFF, SINTERSTORE, SUNIONSTORE, SDIFFSTORE, SSCAN, SMISMEMBER 等 |
+| ZSet 数据结构 | ✅ | ZADD, ZREM, ZSCORE, ZINCRBY, ZCARD, ZCOUNT, ZRANGE, ZREVRANGE, ZRANK, ZREVRANK, ZPOPMAX, ZPOPMIN, ZRANGEBYSCORE, ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZUNION, ZINTER, ZUNIONSTORE, ZINTERSTORE, ZDIFF, ZDIFFSTORE, ZSCAN, ZRANDMEMBER, ZMSCORE 等 |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| Set 数据结构 | 高 | SADD, SMEMBERS, SISMEMBER, SUNION... |
-| ZSet 数据结构 | 高 | ZADD, ZRANGE, ZSCORE, ZRANK... |
 | 过期机制 | 中 | 时间轮实现，主动/被动过期 |
 | 淘汰策略 | 中 | LRU/LFU/Volatile-LRU 等策略 |
 | 发布订阅 | 中 | PUBLISH, SUBSCRIBE, PSUBSCRIBE |
@@ -90,8 +90,8 @@ make clean      # 清理
 ## 下次开发启动
 
 优先级顺序:
-1. **Hash** - 常用数据结构，HSET/HGET 使用频繁
-2. **List** - LPUSH/LPOP/RANGE 队列/栈操作
-3. **Set** - 集合去重、交集、并集
-4. **ZSet** - 排行榜、范围查询
-5. **过期机制** - 核心功能，时间轮优化
+1. **Hash** - 常用数据结构，HSET/HGET 使用频繁 ✅
+2. **List** - LPUSH/LPOP/RANGE 队列/栈操作 ✅
+3. **Set** - 集合去重、交集、并集 ✅
+4. **ZSet** - 排行榜、范围查询 ✅
+5. **过期机制** - 核心功能，时间轮优化 ← 下一个

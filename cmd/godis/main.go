@@ -94,5 +94,11 @@ func registerCommands(disp *command.Dispatcher) {
 	// Register list commands
 	commands.RegisterListCommands(disp)
 
+	// Register set commands
+	commands.RegisterSetCommands(disp)
+
+	// Register zset commands
+	commands.RegisterZSetCommands(disp)
+
 	log.Info("Registered %d commands", len(disp.Commands()))
 }

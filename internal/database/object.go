@@ -11,6 +11,8 @@ import (
 
 	"github.com/zyhnesmr/godis/internal/datastruct/hash"
 	"github.com/zyhnesmr/godis/internal/datastruct/list"
+	"github.com/zyhnesmr/godis/internal/datastruct/set"
+	"github.com/zyhnesmr/godis/internal/datastruct/zset"
 )
 
 // ObjType represents the object type
@@ -392,4 +394,53 @@ func NewListObject() *Object {
 		Ptr:      l,
 		LRU:      uint32(time.Now().Unix()),
 	}
+}
+
+// NewSetObject creates a set object
+func NewSetObject() *Object {
+	s := set.NewSet()
+	return &Object{
+		Type:     ObjTypeSet,
+		Encoding: ObjEncodingHashtable,
+		Ptr:      s,
+		LRU:      uint32(time.Now().Unix()),
+	}
+}
+
+// GetSet returns the set value if object is a set
+func (o *Object) GetSet() (interface{}, bool) {
+	if o == nil || o.Type != ObjTypeSet {
+		return nil, false
+	}
+	return o.Ptr, true
+}
+
+// NewSetObjectFromSlice creates a set object from a slice
+func NewSetObjectFromSlice(items []string) *Object {
+	s := set.NewSetFromSlice(items)
+	return &Object{
+		Type:     ObjTypeSet,
+		Encoding: ObjEncodingHashtable,
+		Ptr:      s,
+		LRU:      uint32(time.Now().Unix()),
+	}
+}
+
+// NewZSetObject creates a sorted set object
+func NewZSetObject() *Object {
+	zs := zset.NewZSet()
+	return &Object{
+		Type:     ObjTypeZSet,
+		Encoding: ObjEncodingSkiplist,
+		Ptr:      zs,
+		LRU:      uint32(time.Now().Unix()),
+	}
+}
+
+// GetZSet returns the sorted set value if object is a sorted set
+func (o *Object) GetZSet() (interface{}, bool) {
+	if o == nil || o.Type != ObjTypeZSet {
+		return nil, false
+	}
+	return o.Ptr, true
 }
