@@ -7,13 +7,19 @@ package database
 import (
 	"fmt"
 	"sync"
+
+	"github.com/zyhnesmr/godis/internal/eviction"
 )
 
 // DBSelector manages multiple databases
 type DBSelector struct {
-	dbs   []*DB
-	mu    sync.RWMutex
-	count int
+	dbs      []*DB
+	mu       sync.RWMutex
+	count    int
+
+	// Eviction management
+	evictionMgr *eviction.Manager
+	maxMemory   int64
 }
 
 // NewDBSelector creates a new database selector
@@ -27,10 +33,37 @@ func NewDBSelector(count int) *DBSelector {
 		dbs[i] = NewDB(i)
 	}
 
-	return &DBSelector{
-		dbs:   dbs,
-		count: count,
+	s := &DBSelector{
+		dbs:    dbs,
+		count:  count,
 	}
+
+	// Initialize eviction manager
+	s.evictionMgr = eviction.NewManager(eviction.PolicyNoEviction, 0, 5)
+
+	return s
+}
+
+// NewDBSelectorWithEviction creates a new database selector with eviction policy
+func NewDBSelectorWithEviction(count int, policyType eviction.PolicyType, maxMemory int64) *DBSelector {
+	if count <= 0 {
+		count = 16
+	}
+
+	dbs := make([]*DB, count)
+	for i := 0; i < count; i++ {
+		dbs[i] = NewDB(i)
+	}
+
+	s := &DBSelector{
+		dbs:       dbs,
+		count:     count,
+		maxMemory: maxMemory,
+	}
+
+	s.evictionMgr = eviction.NewManager(policyType, maxMemory, 5)
+
+	return s
 }
 
 // GetDB returns a database by index
@@ -111,4 +144,82 @@ func (s *DBSelector) ActiveExpireAll(limitPerDB int) int {
 	}
 
 	return totalExpired
+}
+
+// ==================== Eviction Management ====================
+
+// GetEvictionManager returns the eviction manager
+func (s *DBSelector) GetEvictionManager() *eviction.Manager {
+	return s.evictionMgr
+}
+
+// SetEvictionPolicy sets the eviction policy
+func (s *DBSelector) SetEvictionPolicy(policyType eviction.PolicyType) {
+	s.evictionMgr.SetPolicy(policyType)
+}
+
+// GetEvictionPolicy returns the current eviction policy
+func (s *DBSelector) GetEvictionPolicy() eviction.PolicyType {
+	return s.evictionMgr.GetPolicy()
+}
+
+// SetMaxMemory sets the maximum memory limit
+func (s *DBSelector) SetMaxMemory(maxMemory int64) {
+	s.mu.Lock()
+	s.maxMemory = maxMemory
+	s.mu.Unlock()
+
+	s.evictionMgr.SetMaxMemory(maxMemory)
+}
+
+// GetMaxMemory returns the maximum memory limit
+func (s *DBSelector) GetMaxMemory() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxMemory
+}
+
+// GetTotalMemoryUsage returns the total memory usage across all databases
+func (s *DBSelector) GetTotalMemoryUsage() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int64
+	for _, db := range s.dbs {
+		total += db.GetMemoryUsage()
+	}
+	return total
+}
+
+// ShouldEvict checks if eviction should be performed
+func (s *DBSelector) ShouldEvict() bool {
+	return s.evictionMgr.ShouldEvict()
+}
+
+// ProcessEviction attempts to evict keys to free up memory
+func (s *DBSelector) ProcessEviction(bytesNeeded int64) (int, error) {
+	// Collect all databases as DBAccessor
+	dbs := make([]eviction.DBAccessor, len(s.dbs))
+	s.mu.RLock()
+	for i, db := range s.dbs {
+		dbs[i] = db
+	}
+	s.mu.RUnlock()
+
+	return s.evictionMgr.ProcessEvictionForDBs(dbs, bytesNeeded)
+}
+
+// CheckAndEvict checks if eviction is needed and performs it
+func (s *DBSelector) CheckAndEvict() error {
+	if !s.ShouldEvict() {
+		return nil
+	}
+
+	_, err := s.ProcessEviction(0)
+	return err
+}
+
+// GetEvictionStats returns eviction statistics
+func (s *DBSelector) GetEvictionStats() eviction.Stats {
+	return s.evictionMgr.GetStats()
 }

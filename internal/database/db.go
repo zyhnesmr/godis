@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/zyhnesmr/godis/internal/eviction"
 )
 
 // DB represents a single Redis database
@@ -36,18 +38,43 @@ func (db *DB) GetID() int {
 	return db.id
 }
 
-// Get returns the value for a key
+// Get returns the value for a key, with lazy expiration on access
 func (db *DB) Get(key string) (*Object, bool) {
+	// First try with read lock
 	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	// Check if key exists and not expired
-	if obj, ok := db.dict.Get(key); ok {
-		if !db.isExpired(key) {
-			return obj.(*Object), true
-		}
+	obj, ok := db.dict.Get(key)
+	if !ok {
+		db.mu.RUnlock()
+		return nil, false
 	}
 
+	// Check if expired
+	expired := db.isExpiredLocked(key)
+	if !expired {
+		defer db.mu.RUnlock()
+		return obj.(*Object), true
+	}
+
+	// Key is expired, upgrade to write lock for lazy deletion
+	db.mu.RUnlock()
+	db.mu.Lock()
+
+	// Double-check after acquiring write lock
+	obj, ok = db.dict.Get(key)
+	if ok && db.isExpiredLocked(key) {
+		// Lazy delete the expired key
+		db.dict.Delete(key)
+		db.expires.Delete(key)
+		db.keysCount--
+		db.mu.Unlock()
+		return nil, false
+	}
+
+	// Key was refreshed or deleted by another goroutine
+	defer db.mu.Unlock()
+	if ok {
+		return obj.(*Object), true
+	}
 	return nil, false
 }
 
@@ -56,7 +83,8 @@ func (db *DB) Set(key string, value *Object) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	wasNew := !db.dict.Exists(key)
+	// Check if key exists and is not expired
+	wasNew := !db.dict.Exists(key) || db.isExpiredLocked(key)
 	db.dict.Set(key, value)
 
 	if wasNew {
@@ -499,4 +527,138 @@ type DBStats struct {
 	ID      int
 	Keys    int64
 	Expires int
+}
+
+// ==================== Eviction Support ====================
+
+// GetKeyInfo returns information about a key for eviction decisions
+func (db *DB) GetKeyInfo(key string) (*eviction.KeyInfo, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	obj, ok := db.dict.Get(key)
+	if !ok || db.isExpiredLocked(key) {
+		return nil, false
+	}
+
+	object, ok := obj.(*Object)
+	if !ok {
+		return nil, false
+	}
+
+	var expiresAt int64
+	if exp, ok := db.expires.Get(key); ok {
+		expiresAt = exp.(int64)
+	}
+
+	return &eviction.KeyInfo{
+		Key:       key,
+		LRU:       object.LRU,
+		ExpiresAt: expiresAt,
+		Size:      object.Size(),
+	}, true
+}
+
+// GetRandomKey returns a random key from the database
+func (db *DB) GetRandomKey() (string, bool) {
+	return db.RandomKey()
+}
+
+// GetRandomKeyWithExpiration returns a random key that has an expiration
+func (db *DB) GetRandomKeyWithExpiration() (string, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// Try up to 100 times to find a key with expiration
+	for i := 0; i < 100; i++ {
+		key, ok := db.dict.RandomKey()
+		if !ok {
+			return "", false
+		}
+
+		if !db.isExpiredLocked(key) {
+			if _, hasExp := db.expires.Get(key); hasExp {
+				return key, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// GetKeysCount returns the total number of keys in the database
+func (db *DB) GetKeysCount() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// Count non-expired keys
+	count := 0
+	for _, key := range db.dict.Keys() {
+		if !db.isExpiredLocked(key) {
+			count++
+		}
+	}
+	return count
+}
+
+// GetKeysWithExpirationCount returns the number of keys with expiration
+func (db *DB) GetKeysWithExpirationCount() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	count := 0
+	for _, key := range db.expires.Keys() {
+		if db.dict.Exists(key) && !db.isExpiredLocked(key) {
+			count++
+		}
+	}
+	return count
+}
+
+// Delete removes a key from the database (for eviction)
+// This implements eviction.DBAccessor interface
+func (db *DB) DeleteForEviction(key string) bool {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if !db.dict.Exists(key) {
+		return false
+	}
+
+	db.dict.Delete(key)
+	db.expires.Delete(key)
+	db.keysCount--
+	return true
+}
+
+// DeleteSingle removes a single key from the database (implements eviction.DBAccessor.Delete)
+func (db *DB) DeleteSingle(key string) bool {
+	return db.DeleteForEviction(key)
+}
+
+// GetMemoryUsage returns the approximate memory usage of the database
+func (db *DB) GetMemoryUsage() int64 {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var total int64
+
+	// Estimate memory from all objects
+	for _, key := range db.dict.Keys() {
+		if db.isExpiredLocked(key) {
+			continue
+		}
+
+		if obj, ok := db.dict.Get(key); ok {
+			if o, ok := obj.(*Object); ok {
+				total += o.Size()
+				total += int64(len(key)) // Add key size
+			}
+		}
+	}
+
+	// Add overhead for dictionaries
+	total += int64(db.dict.Len()) * 16 // Approximate pointer overhead
+
+	return total
 }
