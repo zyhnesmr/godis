@@ -317,6 +317,9 @@ func setCmd(ctx *command.Context) (*command.Reply, error) {
 
 // GET key
 func getCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 1 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	key := ctx.Args[0]
 
 	obj, ok := ctx.DB.Get(key)
@@ -414,11 +417,17 @@ func setnxCmd(ctx *command.Context) (*command.Reply, error) {
 
 // INCR key
 func incrCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 1 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	return doIncr(ctx, 1)
 }
 
 // INCRBY key delta
 func incrbyCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 2 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	delta, err := strconv.ParseInt(ctx.Args[1], 10, 64)
 	if err != nil {
 		return nil, errors.New("value is not an integer or out of range")
@@ -428,11 +437,17 @@ func incrbyCmd(ctx *command.Context) (*command.Reply, error) {
 
 // DECR key
 func decrCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 1 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	return doIncr(ctx, -1)
 }
 
 // DECRBY key delta
 func decrbyCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 2 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	delta, err := strconv.ParseInt(ctx.Args[1], 10, 64)
 	if err != nil {
 		return nil, errors.New("value is not an integer or out of range")
@@ -471,6 +486,9 @@ func doIncr(ctx *command.Context, delta int64) (*command.Reply, error) {
 
 // INCRBYFLOAT key delta
 func incrbyfloatCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 2 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	key := ctx.Args[0]
 	delta, err := strconv.ParseFloat(ctx.Args[1], 64)
 	if err != nil {
@@ -508,6 +526,9 @@ func incrbyfloatCmd(ctx *command.Context) (*command.Reply, error) {
 
 // APPEND key value
 func appendCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 2 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	key := ctx.Args[0]
 	value := ctx.Args[1]
 
@@ -527,6 +548,9 @@ func appendCmd(ctx *command.Context) (*command.Reply, error) {
 
 // STRLEN key
 func strlenCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) < 1 {
+		return nil, errors.New("wrong number of arguments")
+	}
 	key := ctx.Args[0]
 
 	obj, ok := ctx.DB.Get(key)
@@ -539,6 +563,10 @@ func strlenCmd(ctx *command.Context) (*command.Reply, error) {
 
 // GETRANGE key start end
 func getrangeCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) != 3 {
+		return nil, errors.New("wrong number of arguments")
+	}
+
 	key := ctx.Args[0]
 
 	start, err := strconv.Atoi(ctx.Args[1])
@@ -591,6 +619,10 @@ func getrangeCmd(ctx *command.Context) (*command.Reply, error) {
 
 // SETRANGE key offset value
 func setrangeCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) != 3 {
+		return nil, errors.New("wrong number of arguments")
+	}
+
 	key := ctx.Args[0]
 
 	offset, err := strconv.Atoi(ctx.Args[1])
@@ -632,6 +664,10 @@ func setrangeCmd(ctx *command.Context) (*command.Reply, error) {
 
 // GETSET key value
 func getsetCmd(ctx *command.Context) (*command.Reply, error) {
+	if len(ctx.Args) != 2 {
+		return nil, errors.New("wrong number of arguments")
+	}
+
 	key := ctx.Args[0]
 	value := ctx.Args[1]
 

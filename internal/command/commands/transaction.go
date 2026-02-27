@@ -153,6 +153,12 @@ func execCmd(ctx *command.Context) (*command.Reply, error) {
 			Args:    queuedCmd.Args,
 		}
 
+		// Check Arity before executing the command
+		if err := cmd.CheckArity(len(queuedCmd.Args)); err != nil {
+			replies = append(replies, err.Error())
+			continue
+		}
+
 		// Execute the command
 		reply, err := cmd.Handler(cmdCtx)
 		if err != nil {
