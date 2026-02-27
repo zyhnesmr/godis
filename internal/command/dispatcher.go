@@ -13,21 +13,29 @@ import (
 	"github.com/zyhnesmr/godis/internal/database"
 	"github.com/zyhnesmr/godis/internal/net"
 	"github.com/zyhnesmr/godis/internal/protocol/resp"
+	"github.com/zyhnesmr/godis/internal/transaction"
 )
 
 // Dispatcher dispatches commands to their handlers
 type Dispatcher struct {
-	commands map[string]*Command
-	mu       sync.RWMutex
-	db       *database.DBSelector
+	commands   map[string]*Command
+	mu         sync.RWMutex
+	db         *database.DBSelector
+	txManager  *transaction.Manager
 }
 
 // NewDispatcher creates a new command dispatcher
 func NewDispatcher(db *database.DBSelector) *Dispatcher {
 	return &Dispatcher{
-		commands: make(map[string]*Command),
-		db:       db,
+		commands:  make(map[string]*Command),
+		db:        db,
+		txManager: transaction.NewManager(),
 	}
+}
+
+// GetTxManager returns the transaction manager
+func (d *Dispatcher) GetTxManager() *transaction.Manager {
+	return d.txManager
 }
 
 // Register registers a new command
@@ -60,6 +68,26 @@ func (d *Dispatcher) Dispatch(ctx context.Context, conn *net.Conn, cmdName strin
 		return resp.BuildErrorString(err.Error()), nil
 	}
 
+	// Handle transaction commands
+	switch strings.ToUpper(cmdName) {
+	case "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH":
+		// These are always executed immediately
+		return d.dispatchCommand(ctx, conn, cmd, args)
+	}
+
+	// Check if client is in MULTI state
+	if d.txManager.IsInTransaction(conn) {
+		// Queue the command
+		d.txManager.Queue(conn, cmdName, args)
+		return resp.BuildQueued(), nil
+	}
+
+	// Execute command normally
+	return d.dispatchCommand(ctx, conn, cmd, args)
+}
+
+// dispatchCommand executes a command immediately
+func (d *Dispatcher) dispatchCommand(ctx context.Context, conn *net.Conn, cmd *Command, args []string) ([]byte, error) {
 	// Get database for this connection
 	db, err := d.db.GetDB(conn.GetDB())
 	if err != nil {
@@ -70,7 +98,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, conn *net.Conn, cmdName strin
 	cmdCtx := &Context{
 		DB:      db,
 		Conn:    conn,
-		CmdName: cmdName,
+		CmdName: cmd.Name,
 		Args:    args,
 	}
 
@@ -81,6 +109,41 @@ func (d *Dispatcher) Dispatch(ctx context.Context, conn *net.Conn, cmdName strin
 	}
 
 	return reply.Marshal(), nil
+}
+
+// DispatchCommand dispatches a single command (used by EXEC)
+func (d *Dispatcher) DispatchCommand(ctx interface{}, conn *net.Conn, cmdName string, args []string) (*Reply, error) {
+	cmd, ok := d.Get(cmdName)
+	if !ok {
+		return NewErrorReplyStr(fmt.Sprintf("ERR unknown command '%s'", cmdName)), nil
+	}
+
+	// Check arity
+	if err := cmd.CheckArity(len(args)); err != nil {
+		return NewErrorReply(err), nil
+	}
+
+	return d.dispatchCommandReply(context.Background(), conn, cmd, args)
+}
+
+// dispatchCommandReply executes a command and returns a Reply
+func (d *Dispatcher) dispatchCommandReply(ctx context.Context, conn *net.Conn, cmd *Command, args []string) (*Reply, error) {
+	// Get database for this connection
+	db, err := d.db.GetDB(conn.GetDB())
+	if err != nil {
+		return NewErrorReplyStr("ERR invalid DB index"), nil
+	}
+
+	// Create command context
+	cmdCtx := &Context{
+		DB:      db,
+		Conn:    conn,
+		CmdName: cmd.Name,
+		Args:    args,
+	}
+
+	// Execute command
+	return cmd.Handler(cmdCtx)
 }
 
 // ProcessCommand processes a command (compatibility interface)

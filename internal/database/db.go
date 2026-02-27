@@ -12,6 +12,9 @@ import (
 	"github.com/zyhnesmr/godis/internal/eviction"
 )
 
+// DirtyKeyCallback is called when a key is modified
+type DirtyKeyCallback func(key string)
+
 // DB represents a single Redis database
 type DB struct {
 	id      int
@@ -21,6 +24,9 @@ type DB struct {
 
 	// Statistics
 	keysCount int64
+
+	// Transaction support
+	dirtyKeyCallback DirtyKeyCallback
 }
 
 // NewDB creates a new database
@@ -30,6 +36,20 @@ func NewDB(id int) *DB {
 		dict:      NewDict(),
 		expires:   NewDict(),
 		keysCount: 0,
+	}
+}
+
+// SetDirtyKeyCallback sets the callback for marking dirty keys
+func (db *DB) SetDirtyKeyCallback(cb DirtyKeyCallback) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.dirtyKeyCallback = cb
+}
+
+// markDirty marks a key as dirty (modified)
+func (db *DB) markDirty(key string) {
+	if db.dirtyKeyCallback != nil {
+		db.dirtyKeyCallback(key)
 	}
 }
 
@@ -90,6 +110,8 @@ func (db *DB) Set(key string, value *Object) {
 	if wasNew {
 		db.keysCount++
 	}
+
+	db.markDirty(key)
 }
 
 // SetNX sets a key-value pair only if key doesn't exist
@@ -103,6 +125,7 @@ func (db *DB) SetNX(key string, value *Object) bool {
 
 	db.dict.Set(key, value)
 	db.keysCount++
+	db.markDirty(key)
 	return true
 }
 
@@ -116,6 +139,7 @@ func (db *DB) SetXX(key string, value *Object) bool {
 	}
 
 	db.dict.Set(key, value)
+	db.markDirty(key)
 	return true
 }
 
@@ -131,6 +155,7 @@ func (db *DB) Delete(keys ...string) int {
 			db.expires.Delete(key)
 			db.keysCount--
 			deleted++
+			db.markDirty(key)
 		}
 	}
 
@@ -237,6 +262,8 @@ func (db *DB) Rename(key, newKey string) error {
 		db.expires.Set(newKey, expireTime)
 	}
 
+	db.markDirty(key)
+	db.markDirty(newKey)
 	return nil
 }
 
@@ -274,6 +301,8 @@ func (db *DB) RenameNX(key, newKey string) (bool, error) {
 		db.expires.Set(newKey, expireTime)
 	}
 
+	db.markDirty(key)
+	db.markDirty(newKey)
 	return true, nil
 }
 
@@ -465,6 +494,7 @@ func (db *DB) ActiveExpire(limit int) int {
 			db.expires.Delete(key)
 			db.keysCount--
 			expired++
+			db.markDirty(key)
 		}
 	}
 

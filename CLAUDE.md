@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (15/24 核心任务)
+### ✅ 已完成模块 (17/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -25,13 +25,13 @@
 | ZSet 数据结构 | ✅ | ZADD, ZREM, ZSCORE, ZINCRBY, ZCARD, ZCOUNT, ZRANGE, ZREVRANGE, ZRANK, ZREVRANK, ZPOPMAX, ZPOPMIN, ZRANGEBYSCORE, ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZUNION, ZINTER, ZUNIONSTORE, ZINTERSTORE, ZDIFF, ZDIFFSTORE, ZSCAN, ZRANDMEMBER, ZMSCORE 等 |
 | 过期机制 | ✅ | 时间轮, 主动/被动过期, Expire/ExpireAt/TTL/Persist/SETEX/PSETEX |
 | 淘汰策略 | ✅ | LRU/LFU/TTL/Random/NoEviction, allkeys-volatile变体 |
+| 发布订阅 | ✅ | PUBLISH, SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, PUBSUB |
+| 事务支持 | ✅ | MULTI, EXEC, DISCARD, WATCH, UNWATCH |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| 发布订阅 | 中 | PUBLISH, SUBSCRIBE, PSUBSCRIBE |
-| 事务支持 | 中 | MULTI, EXEC, DISCARD, WATCH |
 | RDB 持久化 | 中 | 快照保存，RDB 格式编码/解码 |
 | AOF 持久化 | 中 | 追加日志，AOF 重写 |
 | Stream 数据结构 | 低 | XADD, XREAD, XGROUP, XACK |
@@ -77,6 +77,60 @@ maxmemory-policy allkeys-lru
 maxmemory-samples 5
 ```
 
+### 发布订阅测试
+
+```bash
+# 终端1: 订阅频道
+redis-cli -p 6379 SUBSCRIBE mychannel
+# 预期响应:
+# *3
+# $9
+# subscribe
+# $9
+# mychannel
+# :1
+
+# 终端2: 发布消息
+redis-cli -p 6379 PUBLISH mychannel "Hello, World!"
+# 预期响应: (integer) 1
+
+# 终端1将收到消息:
+# *3
+# $7
+# message
+# $9
+# mychannel
+# $13
+# Hello, World!
+
+# PUBSUB 命令
+redis-cli -p 6379 PUBSUB CHANNELS      # 列出活跃频道
+redis-cli -p 6379 PUBSUB NUMSUB mychannel  # 查看频道订阅数
+redis-cli -p 6379 PUBSUB NUMPAT        # 查看模式订阅数
+```
+
+### 事务测试
+
+```bash
+# 基本事务
+printf "MULTI\nSET key1 value1\nSET key2 value2\nEXEC\n" | redis-cli
+# 预期: OK, QUEUED, QUEUED, OK (最后返回结果数组)
+
+# DISCARD 取消事务
+printf "MULTI\nSET key3 value3\nDISCARD\nGET key3\n" | redis-cli
+# 预期: OK, QUEUED, OK, (nil)
+
+# WATCH 乐观锁
+redis-cli SET mykey hello
+printf "WATCH mykey\nMULTI\nSET mykey world\nEXEC\n" | redis-cli
+# 预期: OK, OK, QUEUED, OK (成功执行)
+
+# 并发修改导致事务失败
+# 连接1: WATCH key, MULTI, (等待), EXEC
+# 连接2: (在EXEC前) SET key new_value
+# 预期: EXEC 返回 nil 数组
+```
+
 ## 技术栈
 
 - **语言**: Go 1.24+
@@ -86,6 +140,7 @@ maxmemory-samples 5
 - **数据结构**: Dict with incremental rehash
 - **过期**: 时间轮 + 懒惰删除 + 主动扫描
 - **淘汰**: 近似LRU/LFU + EvictionPool (256 buckets)
+- **事务**: MULTI/EXEC + WATCH 乐观锁 + dirty key 追踪
 
 ## 开发笔记
 
@@ -120,4 +175,6 @@ make clean      # 清理
 4. **ZSet** - 排行榜、范围查询 ✅
 5. **过期机制** - 核心功能，时间轮优化 ✅
 6. **淘汰策略** - LRU/LFU 内存管理 ✅
-7. **发布订阅** - PUBLISH, SUBSCRIBE, PSUBSCRIBE ← 下一个
+7. **发布订阅** - PUBLISH, SUBSCRIBE, PSUBSCRIBE ✅
+8. **事务支持** - MULTI, EXEC, DISCARD, WATCH ✅
+9. **RDB 持久化** - 快照保存，RDB 格式编码/解码 ← 下一个

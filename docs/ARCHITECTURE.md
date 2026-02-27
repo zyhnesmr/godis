@@ -121,8 +121,8 @@ godis/
 │   │   │   ├── list.go             # 列表命令 (LPUSH, LPOP...)
 │   │   │   ├── set.go              # 集合命令 (SADD, SMEMBERS...)
 │   │   │   ├── zset.go             # 有序集合命令 (ZADD, ZRANGE...)
-│   │   │   ├── stream.go           # 流命令 (XADD, XREAD...)
 │   │   │   ├── pubsub.go           # 发布订阅命令 (PUBLISH, SUBSCRIBE...)
+│   │   │   ├── stream.go           # 流命令 (XADD, XREAD...)
 │   │   │   ├── transaction.go      # 事务命令 (MULTI, EXEC...)
 │   │   │   ├── server.go           # 服务器命令 (PING, INFO...)
 │   │   │   └── admin.go            # 管理命令 (CONFIG, FLUSHDB...)
@@ -195,14 +195,12 @@ godis/
 │   │   └── loader.go               # 数据加载器
 │   │
 │   ├── pubsub/
-│   │   ├── pubsub.go               # 发布订阅
-│   │   ├── channel.go              # 频道管理
-│   │   └── pattern.go              # 模式订阅
+│   │   └── manager.go              # 发布订阅管理器 (频道、模式订阅)
 │   │
 │   ├── transaction/
-│   │   ├── transaction.go          # 事务管理
-│   │   ├── multi.go               # MULTI/EXEC
-│   │   └── watch.go                # WATCH 机制
+│   │   ├── manager.go              # 事务管理器 (队列、WATCH)
+│   │   └── commands/               # 事务命令实现
+│   │       └── transaction.go      # MULTI, EXEC, DISCARD, WATCH, UNWATCH
 │   │
 │   ├── replication/
 │   │   └── replication.go          # 主从复制 (可选)
@@ -385,16 +383,80 @@ godis/
 
 ```
 事务流程:
-├── MULTI                # 标记事务开始
-├── ...命令入队...       # 命令进入队列
-├── EXEC                 # 执行事务
-└── DISCARD              # 取消事务
+├── MULTI                # 标记事务开始，设置 FlagMulti
+├── ...命令入队...       # 命令进入队列，返回 QUEUED
+├── EXEC                 # 执行事务中所有命令
+├── DISCARD              # 取消事务，清空队列
+└── WATCH/UNWATCH        # 乐观锁机制
 ```
 
-**WATCH 机制**:
-- 乐观锁实现
+**事务状态管理**:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Transaction Manager                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Command    │  │   Watched    │  │   Dirty      │     │
+│  │    Queue     │  │    Keys      │  │    Keys      │     │
+│  │  (Conn→Cmd)  │  │ (Conn→Keys)  │  │  (Key→bool)  │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**WATCH 机制 (乐观锁)**:
 - 监控 key 在事务执行期间是否被修改
+- 通过 dirty key 回调机制实现
+- DB 写操作时标记 dirty keys
+- EXEC 前检查 watched keys 是否 dirty
 - CAS (Check-And-Set) 语义
+
+**实现细节**:
+- `Conn.SetInMulti()`: 设置事务状态
+- `Conn.IsInMulti()`: 检查是否在事务中
+- `Dispatcher`: MULTI 状态下命令排队而非执行
+- `DB.SetDirtyKeyCallback()`: 设置 dirty key 回调
+- `Manager.CheckWatchedKeys()`: 检查 watched keys 是否被修改
+- `Manager.ClearWatchedDirty()`: EXEC 成功后清除 dirty 标记
+
+### 3.6 发布订阅机制
+
+```
+发布订阅架构:
+├── 频道订阅 (Channel Subscription)
+│   ├── SUBSCRIBE channel [channel ...]
+│   ├── UNSUBSCRIBE [channel ...]
+│   └── 消息格式: ["message", "channel", "payload"]
+│
+├── 模式订阅 (Pattern Subscription)
+│   ├── PSUBSCRIBE pattern [pattern ...]
+│   ├── PUNSUBSCRIBE [pattern ...]
+│   ├── 消息格式: ["pmessage", "pattern", "channel", "payload"]
+│   └── Glob 通配符: *, ?, []
+│
+└── 状态查询
+    ├── PUBSUB CHANNELS [pattern]    # 列出活跃频道
+    ├── PUBSUB NUMSUB [channel ...]  # 查看订阅数
+    └── PUBSUB NUMPAT                # 查看模式订阅数
+```
+
+**Pub/Sub 管理器**:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     PubSub Manager                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Channel    │  │   Pattern    │  │ Connection   │     │
+│  │  Subscribers │  │  Subscribers │  │   Tracking   │     │
+│  │              │  │              │  │              │     │
+│  │ ch -> [Conn] │  │ pat -> [Conn]│  │ Conn->subs   │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**核心特性**:
+- **非持久化**: 消息即时投递，不存储
+- **多对多**: 一个频道多个订阅者，一个连接多个订阅
+- **模式匹配**: 支持 glob 通配符订阅
+- **线程安全**: 使用 RWMutex 保护订阅状态
+- **连接清理**: 连接断开时自动清理订阅
 
 ---
 
@@ -417,8 +479,8 @@ godis/
 ### 阶段三: 高级功能 (Week 6-7)
 - [x] 过期机制
 - [x] 淘汰策略
-- [ ] 发布订阅
-- [ ] 事务支持
+- [x] 发布订阅
+- [x] 事务支持
 
 ### 阶段四: 持久化 (Week 8)
 - [ ] RDB 快照

@@ -20,6 +20,9 @@ type DBSelector struct {
 	// Eviction management
 	evictionMgr *eviction.Manager
 	maxMemory   int64
+
+	// Transaction support
+	txManager any // Using any to avoid circular import with transaction package
 }
 
 // NewDBSelector creates a new database selector
@@ -222,4 +225,30 @@ func (s *DBSelector) CheckAndEvict() error {
 // GetEvictionStats returns eviction statistics
 func (s *DBSelector) GetEvictionStats() eviction.Stats {
 	return s.evictionMgr.GetStats()
+}
+
+// ==================== Transaction Management ====================
+
+// SetTransactionManager sets the transaction manager and configures dirty key callbacks
+func (s *DBSelector) SetTransactionManager(txManager any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.txManager = txManager
+
+	// Set dirty key callback for each database
+	for _, db := range s.dbs {
+		db.SetDirtyKeyCallback(s.createDirtyKeyCallback())
+	}
+}
+
+// createDirtyKeyCallback creates a callback function for marking dirty keys
+func (s *DBSelector) createDirtyKeyCallback() DirtyKeyCallback {
+	return func(key string) {
+		if s.txManager != nil {
+			// Use type assertion to call MarkDirty
+			if mgr, ok := s.txManager.(interface{ MarkDirty(key string) }); ok {
+				mgr.MarkDirty(key)
+			}
+		}
+	}
 }

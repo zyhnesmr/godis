@@ -19,6 +19,7 @@ import (
 	"github.com/zyhnesmr/godis/internal/eviction"
 	"github.com/zyhnesmr/godis/internal/expire"
 	"github.com/zyhnesmr/godis/internal/net"
+	"github.com/zyhnesmr/godis/internal/pubsub"
 	"github.com/zyhnesmr/godis/pkg/log"
 )
 
@@ -148,6 +149,18 @@ func runEvictionChecker(ctx context.Context, dbSelector *database.DBSelector) {
 }
 
 func registerCommands(disp *command.Dispatcher) {
+	// Initialize pubsub manager
+	mgr := pubsub.NewManager()
+	commands.SetPubSubManager(mgr)
+
+	// Set transaction manager to DBSelector for dirty key tracking
+	txManager := disp.GetTxManager()
+	disp.GetDB().SetTransactionManager(txManager)
+
+	// Register transaction commands with tx manager
+	commands.SetTxManager(txManager)
+	commands.RegisterTransactionCommands(disp)
+
 	// Register server commands
 	commands.RegisterServerCommands(disp)
 
@@ -168,6 +181,9 @@ func registerCommands(disp *command.Dispatcher) {
 
 	// Register zset commands
 	commands.RegisterZSetCommands(disp)
+
+	// Register pubsub commands
+	commands.RegisterPubSubCommands(disp)
 
 	log.Info("Registered %d commands", len(disp.Commands()))
 }
