@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (18/24 核心任务)
+### ✅ 已完成模块 (20/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -23,18 +23,18 @@
 | List 数据结构 | ✅ | LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN 等 |
 | Set 数据结构 | ✅ | SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SPOP, SRANDMEMBER, SMOVE, SINTER, SUNION, SDIFF, SINTERSTORE, SUNIONSTORE, SDIFFSTORE, SSCAN, SMISMEMBER 等 |
 | ZSet 数据结构 | ✅ | ZADD, ZREM, ZSCORE, ZINCRBY, ZCARD, ZCOUNT, ZRANGE, ZREVRANGE, ZRANK, ZREVRANK, ZPOPMAX, ZPOPMIN, ZRANGEBYSCORE, ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZUNION, ZINTER, ZUNIONSTORE, ZINTERSTORE, ZDIFF, ZDIFFSTORE, ZSCAN, ZRANDMEMBER, ZMSCORE 等 |
+| Stream 数据结构 | ✅ | XADD, XLEN, XRANGE, XREVRANGE, XREAD, XDEL, XTRIM, XGROUP, XREADGROUP, XACK, XCLAIM, XPENDING, XINFO |
 | 过期机制 | ✅ | 时间轮, 主动/被动过期, Expire/ExpireAt/TTL/Persist/SETEX/PSETEX |
 | 淘汰策略 | ✅ | LRU/LFU/TTL/Random/NoEviction, allkeys-volatile变体 |
 | 发布订阅 | ✅ | PUBLISH, SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, PUBSUB |
 | 事务支持 | ✅ | MULTI, EXEC, DISCARD, WATCH, UNWATCH |
 | RDB 持久化 | ✅ | SAVE, BGSAVE, LASTSAVE, 启动自动加载, CRC64 校验 |
+| AOF 持久化 | ✅ | APPENDONLY, BGREWRITEAOF, AOF 重写, Fsync 策略 |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| AOF 持久化 | 中 | 追加日志，AOF 重写 |
-| Stream 数据结构 | 低 | XADD, XREAD, XGROUP, XACK |
 | Bitmap/HyperLogLog | 低 | SETBIT, GETBIT, BITCOUNT, PFADD... |
 | 地理位置 | 低 | GEOADD, GEORADIUS, GEOHASH... |
 | Lua 脚本 | 低 | EVAL, EVALSHA, SCRIPT LOAD/FLUSH |
@@ -164,6 +164,104 @@ ls -la dump.rdb
 hexdump -C dump.rdb | head -20
 ```
 
+### Stream 数据结构测试
+
+```bash
+# XADD - 添加条目到流
+redis-cli XADD mystream 100-0 name Alice age 30
+redis-cli XADD mystream 100-1 name Bob age 25
+redis-cli XADD mystream 100-2 name Charlie age 35
+
+# XLEN - 获取流长度
+redis-cli XLEN mystream
+# 预期: 3
+
+# XRANGE - 获取范围条目
+redis-cli XRANGE mystream - +
+# 预期: 返回所有条目
+
+# XRANGE with COUNT
+redis-cli XRANGE mystream - + COUNT 2
+# 预期: 返回前2条条目
+
+# XREVRANGE - 反向获取
+redis-cli XREVRANGE mystream + -
+# 预期: 反序返回所有条目
+
+# XGROUP CREATE - 创建消费者组 (MKSTREAM 自动创建流)
+redis-cli XGROUP CREATE newstream mygroup 0 MKSTREAM
+# 预期: OK
+
+# XADD 到新流
+redis-cli XADD newstream 200-0 message hello
+
+# XINFO STREAM - 查看流信息
+redis-cli XINFO STREAM newstream
+# 预期: length, groups, last-generated-id 等信息
+
+# XINFO GROUPS - 查看消费者组
+redis-cli XINFO GROUPS newstream
+# 预期: 消费者组列表
+
+# XDEL - 删除条目
+redis-cli XDEL mystream 100-1
+redis-cli XLEN mystream
+# 预期: 2
+
+# XTRIM - 裁剪流
+redis-cli XADD trimstream 1-0 field1 value1
+redis-cli XADD trimstream 2-0 field2 value2
+redis-cli XADD trimstream 3-0 field3 value3
+redis-cli XTRIM trimstream MAXLEN 1
+redis-cli XLEN trimstream
+# 预期: 1
+```
+
+### AOF 持久化测试
+
+```bash
+# 启用 AOF
+redis-cli APPENDONLY yes
+# 预期: OK
+
+# 添加测试数据
+redis-cli SET aof_key1 "value1"
+redis-cli SET aof_key2 "value2"
+redis-cli LPUSH aof_list item1 item2
+redis-cli ZADD aof_zset 10 member1 20 member2
+redis-cli HSET aof_hash field1 value1
+
+# 查看 AOF 文件
+cat appendonly.aof
+# 预期: RESP 格式的命令日志
+# *2$10APPENDONLY$3yes
+# *3$3SET$8aof_key1$6value1...
+
+# AOF 重写
+redis-cli BGREWRITEAOF
+# 预期: Background append only file rewriting started
+
+# 重启服务器验证 AOF 加载
+pkill -f "bin/godis"
+./bin/godis
+redis-cli DBSIZE
+# 预期: 5
+
+# 验证数据
+redis-cli GET aof_key1
+# 预期: value1
+redis-cli LRANGE aof_list 0 -1
+# 预期: item2, item1
+redis-cli ZRANGE aof_zset 0 -1 WITHSCORES
+# 预期: member1, 10, member2, 20
+redis-cli HGET aof_hash field1
+# 预期: value1
+
+# 禁用 AOF
+redis-cli APPENDONLY no
+# 预期: OK
+```
+
 ## 技术栈
 
 - **语言**: Go 1.24+
@@ -174,7 +272,7 @@ hexdump -C dump.rdb | head -20
 - **过期**: 时间轮 + 懒惰删除 + 主动扫描
 - **淘汰**: 近似LRU/LFU + EvictionPool (256 buckets)
 - **事务**: MULTI/EXEC + WATCH 乐观锁 + dirty key 追踪
-- **持久化**: RDB 快照 (Redis 格式兼容, CRC64 校验)
+- **持久化**: RDB 快照 + AOF 日志 (Redis 格式兼容, CRC64 校验)
 
 ## 开发笔记
 
@@ -206,10 +304,16 @@ make clean      # 清理
 1. **Hash** - 常用数据结构，HSET/HGET 使用频繁 ✅
 2. **List** - LPUSH/LPOP/RANGE 队列/栈操作 ✅
 3. **Set** - 集合去重、交集、并集 ✅
-4. **ZSet** - 排行榜、范围查询 ✅
+4. **ZSet** - 排行榜、范围查询 ✅ (含 ZADD bug 修复)
 5. **过期机制** - 核心功能，时间轮优化 ✅
 6. **淘汰策略** - LRU/LFU 内存管理 ✅
 7. **发布订阅** - PUBLISH, SUBSCRIBE, PSUBSCRIBE ✅
 8. **事务支持** - MULTI, EXEC, DISCARD, WATCH ✅
 9. **RDB 持久化** - 快照保存，RDB 格式编码/解码 ✅
-10. **AOF 持久化** - 追加日志，AOF 重写 ← 下一个
+10. **AOF 持久化** - 追加日志，AOF 重写 ✅
+
+## 已修复 Bug
+
+| Bug | 描述 | 修复时间 |
+|-----|------|----------|
+| ZADD 超时 | 参数解析循环中 `break` 只跳出 `switch` 而非 `for` 循环 | 2026-02-27 |

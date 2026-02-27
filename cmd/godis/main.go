@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/zyhnesmr/godis/internal/expire"
 	"github.com/zyhnesmr/godis/internal/net"
 	"github.com/zyhnesmr/godis/internal/pubsub"
+	aof2 "github.com/zyhnesmr/godis/internal/persistence/aof"
 	rdb2 "github.com/zyhnesmr/godis/internal/persistence/rdb"
 	"github.com/zyhnesmr/godis/pkg/log"
 )
@@ -93,10 +95,40 @@ func main() {
 	dispatcher := command.NewDispatcher(dbSelector)
 
 	// Register all commands
-	registerCommands(dispatcher, dbSelector, cfg)
+	aofMgr := registerCommands(dispatcher, dbSelector, cfg)
 
-	// Load RDB file if exists (after commands are registered so RDB manager is set up)
-	loadRDBOnStartup(dbSelector, cfg)
+	// Set AOF logger (will check if enabled internally)
+	dispatcher.SetAOFLogger(aofMgr)
+
+	// Load data from persistence files
+	// If AOF file exists, load AOF (it has more recent data)
+	// Otherwise load RDB
+	if aofMgr != nil && aofMgr.FileExists() {
+		log.Info("Loading AOF file on startup")
+		loadAOFOnStartup(dbSelector, cfg, aofMgr, func(db int, cmdName string, args []string) error {
+			dbInst, err := dbSelector.GetDB(db)
+			if err != nil {
+				return err
+			}
+
+			cmd, ok := dispatcher.Get(cmdName)
+			if !ok {
+				return nil
+			}
+
+			ctx := &command.Context{
+				DB:      dbInst,
+				CmdName: cmdName,
+				Args:    args,
+			}
+
+			_, err = cmd.Handler(ctx)
+			return err
+		})
+	} else {
+		// Load RDB file if exists
+		loadRDBOnStartup(dbSelector, cfg)
+	}
 
 	// Create server
 	srv := net.NewServer(cfg.Bind, int(cfg.Port), dispatcher)
@@ -152,7 +184,7 @@ func runEvictionChecker(ctx context.Context, dbSelector *database.DBSelector) {
 	}
 }
 
-func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector, cfg *config.Config) {
+func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector, cfg *config.Config) *aof2.AOF {
 	// Initialize pubsub manager
 	mgr := pubsub.NewManager()
 	commands.SetPubSubManager(mgr)
@@ -169,6 +201,45 @@ func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector,
 	rdbMgr := rdb2.NewRDB(cfg.Dir, cfg.RdbFilename)
 	commands.SetRDBManager(rdbMgr)
 	commands.SetDBSelectorForPersistence(dbSelector)
+
+	// Initialize AOF manager
+	aofMgr := aof2.NewAOF(cfg.Dir, cfg.AppendFilename, cfg)
+	aof2.SetAOFManager(aofMgr)
+	aof2.SetDBSelectorForAOF(dbSelector)
+
+	// Set command handler for AOF replay
+	aof2.SetCommandHandler(func(db int, cmdName string, args []string) error {
+		// Get database
+		dbInst, err := dbSelector.GetDB(db)
+		if err != nil {
+			return err
+		}
+
+		// Get command
+		cmd, ok := disp.Get(cmdName)
+		if !ok {
+			return nil // Skip unknown commands
+		}
+
+		// Create context and execute
+		ctx := &command.Context{
+			DB:      dbInst,
+			CmdName: cmdName,
+			Args:    args,
+		}
+
+		_, err = cmd.Handler(ctx)
+		return err
+	})
+
+	// Enable AOF if configured
+	if strings.ToLower(cfg.AppendOnly) == "yes" {
+		if err := aofMgr.Enable(); err != nil {
+			log.Warn("Failed to enable AOF: %v", err)
+		} else {
+			log.Info("AOF enabled: %s", aofMgr.GetFilename())
+		}
+	}
 
 	// Register server commands
 	commands.RegisterServerCommands(disp)
@@ -194,10 +265,15 @@ func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector,
 	// Register pubsub commands
 	commands.RegisterPubSubCommands(disp)
 
-	// Register persistence commands
+	// Register persistence commands (including AOF)
 	commands.RegisterPersistenceCommands(disp)
 
+	// Register stream commands
+	commands.RegisterStreamCommands(disp)
+
 	log.Info("Registered %d commands", len(disp.Commands()))
+
+	return aofMgr
 }
 
 // loadRDBOnStartup loads the RDB file on startup if it exists
@@ -222,5 +298,30 @@ func loadRDBOnStartup(dbSelector *database.DBSelector, cfg *config.Config) {
 		log.Warn("Failed to load RDB file: %v", err)
 	} else {
 		log.Info("RDB file loaded successfully")
+	}
+}
+
+// loadAOFOnStartup loads the AOF file on startup if it exists
+func loadAOFOnStartup(dbSelector *database.DBSelector, cfg *config.Config, aofMgr *aof2.AOF, handler aof2.CommandHandler) {
+	if !aofMgr.FileExists() {
+		log.Info("No AOF file found")
+		return
+	}
+
+	// If AOF is enabled, load it instead of RDB (AOF has more recent data)
+	log.Info("Loading AOF file: %s", aofMgr.GetFilename())
+	dbs := make([]*database.DB, dbSelector.Count())
+	for i := 0; i < dbSelector.Count(); i++ {
+		db, err := dbSelector.GetDB(i)
+		if err != nil {
+			log.Error("Failed to get DB %d: %v", i, err)
+			continue
+		}
+		dbs[i] = db
+	}
+	if err := aofMgr.Load(dbs, handler); err != nil {
+		log.Warn("Failed to load AOF file: %v", err)
+	} else {
+		log.Info("AOF file loaded successfully")
 	}
 }

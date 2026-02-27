@@ -284,6 +284,7 @@ func zaddCmd(ctx *command.Context) (*command.Reply, error) {
 	incr := false
 	idx := 1
 
+OptionsLoop:
 	for idx < len(args) {
 		switch strings.ToUpper(args[idx]) {
 		case "NX":
@@ -299,7 +300,7 @@ func zaddCmd(ctx *command.Context) (*command.Reply, error) {
 			incr = true
 			idx++
 		default:
-			break
+			break OptionsLoop
 		}
 	}
 

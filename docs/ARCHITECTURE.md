@@ -78,7 +78,7 @@ Godis 是一个使用 Go 语言实现的 Redis 兼容内存数据库，支持完
 |------|------|
 | **Networking** | TCP 连接管理、RESP 协议编解码 |
 | **Command** | 命令分发、执行、路由 |
-| **Data Structure** | 5+1 种数据结构实现 |
+| **Data Structure** | 6 种数据结构实现 |
 | **Storage** | 内存管理、过期策略、淘汰算法 |
 | **Persistence** | RDB 快照、AOF 日志 |
 | **Transaction** | 事务支持、乐观锁 |
@@ -374,10 +374,40 @@ godis/
 └── no                   # 由操作系统决定
 ```
 
+**AOF 文件格式**:
+- RESP 格式存储每个写命令
+- 支持 SELECT 命令切换数据库
+- 启动时自动重放命令恢复数据
+
 **AOF 重写**:
 - 当 AOF 文件大小超过指定比例时触发
-- 压缩多条命令为单条
-- 后台进程执行
+- 遍历数据库生成最小命令集
+- 压缩多条命令为单条（如 LPUSH 多个元素 → 一条命令）
+- 后台进程执行，不阻塞主服务
+
+**实现文件**:
+```
+internal/persistence/aof/
+├── aof.go              # AOF 核心功能
+│   ├── Enable()         # 启用 AOF
+│   ├── Disable()        # 禁用 AOF
+│   ├── LogCommand()     # 记录命令到 AOF
+│   ├── Load()           # 启动时加载 AOF
+│   └── fsyncLoop()      # Fsync 后台循环
+├── rewrite.go          # AOF 重写
+│   ├── Rewrite()        # 同步重写
+│   ├── RewriteInBackground() # 异步重写
+│   └── rewriteKey()     # 重写单个键
+└── command.go          # AOF 命令
+    ├── APPENDONLY       # 启用/禁用 AOF
+    └── BGREWRITEAOF    # 后台重写
+```
+
+**核心特性**:
+- 命令过滤：只记录写命令，忽略读命令
+- 自动恢复：启动时检测 AOF 文件并优先加载
+- 增量记录：每个写命令后立即追加到文件
+- 缓冲写入：32KB 写缓冲区，定时刷新
 
 ### 3.5 事务机制
 
@@ -484,11 +514,17 @@ godis/
 
 ### 阶段四: 持久化 (Week 8)
 - [x] RDB 快照
-- [ ] AOF 日志
-- [ ] AOF 重写
+- [x] AOF 日志
+- [x] AOF 重写
 
 ### 阶段五: 高级数据结构 (Week 9)
-- [ ] Stream 流
+- [x] Stream 流
+  - [x] StreamID 格式 (时间戳-序列号)
+  - [x] RadixTree 索引
+  - [x] 消费者组管理
+  - [x] XADD/XLEN/XRANGE/XREVRANGE/XREAD
+  - [x] XGROUP/XREADGROUP/XACK/XCLAIM
+  - [x] XDEL/XTRIM/XPENDING/XINFO
 - [ ] Bitmap 位图
 - [ ] HyperLogLog
 - [ ] Geo 地理位置
@@ -665,36 +701,61 @@ redis.log(level, message)
 
 ---
 
-## 九、Stream 实现设计
+## 九、Stream 实现设计 ✅
 
 ### 9.1 Stream 数据结构
 
 ```
 Stream 结构:
 ┌─────────────────────────────────────────────────────────┐
-│  master ID (最大消息ID)                                   │
-│  last_delivered_id (投递ID)                              │
-│  length (消息数量)                                        │
-│  radix_tree (基数树索引)                                  │
-│  ├─ 1234-0 -> Message {id, fields, ...}                  │
-│  ├─ 1234-1 -> Message {id, fields, ...}                  │
-│  └─ 1235-0 -> Message {id, fields, ...}                  │
-│  consumer_groups:                                         │
-│    └─ mygroup: {name, last_id, consumers[]}             │
+│  entries []*StreamEntry (按ID顺序存储)                     │
+│  lastID StreamID (最后生成的ID)                           │
+│  length int64 (消息数量)                                  │
+│  radixTree *RadixTree (基数树索引)                        │
+│  cgroups *ConsumerGroupManager (消费者组管理)              │
 └─────────────────────────────────────────────────────────┘
+
+StreamEntry 结构:
+┌─────────────────────────────────────────────────────────┐
+│  ID StreamID (时间戳-序列号)                              │
+│  Fields map[string]string (消息字段)                      │
+└─────────────────────────────────────────────────────────┘
+
+StreamID 格式: <millisecondsTimestamp>-<sequenceNumber>
+例如: 1234567890-0
 ```
 
-### 9.2 Stream 核心命令
+**实现要点:**
+1. **RadixTree 索引**: 使用基数树按 ID 前缀快速查找消息
+2. **顺序存储**: entries 数组按 ID 顺序存储，支持二分查找
+3. **消费者组**: 支持多消费者组，每个组维护最后投递 ID 和待处理消息
+4. **ID 生成**: 支持自动生成 (`*`) 和手动指定 ID
 
-| 命令 | 功能 |
+### 9.2 Stream 核心命令 ✅
+
+| 命令 | 功能 | 状态 |
+|------|------|------|
+| XADD | 添加消息到流 | ✅ |
+| XLEN | 获取消息数量 | ✅ |
+| XRANGE | 获取范围消息 | ✅ |
+| XREVRANGE | 反向获取消息 | ✅ |
+| XREAD | 从多个流读取消息 | ✅ |
+| XDEL | 删除消息 | ✅ |
+| XTRIM | 裁剪流到指定长度 | ✅ |
+| XGROUP | 管理消费者组 | ✅ |
+| XREADGROUP | 消费者组读取消息 | ✅ |
+| XACK | 确认消息处理完成 | ✅ |
+| XCLAIM | 转移消息所有权 | ✅ |
+| XPENDING | 查看待处理消息 | ✅ |
+| XINFO | 查看流/组/消费者信息 | ✅ |
+
+### 9.3 实现文件
+
+| 文件 | 说明 |
 |------|------|
-| XADD | 添加消息 |
-| XLEN | 获取消息数量 |
-| XRANGE | 获取范围消息 |
-| XREVRANGE | 反向获取 |
-| XREAD | 读取消息 |
-| XGROUP | 管理消费者组 |
-| XREADGROUP | 消费者组读取 |
-| XACK | 确认消息 |
-| XCLAIM | 转移消息所有权 |
-| XPENDING | 查看待处理消息 |
+| `internal/datastruct/stream/stream.go` | Stream 核心数据结构和操作 |
+| `internal/datastruct/stream/radix_tree.go` | RadixTree 索引实现 |
+| `internal/datastruct/stream/consumer.go` | 消费者组和消费者管理 |
+| `internal/command/commands/stream.go` | Stream 命令处理 |
+| `internal/database/object.go` | Stream 对象类型支持 |
+

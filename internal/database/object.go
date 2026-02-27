@@ -12,6 +12,7 @@ import (
 	"github.com/zyhnesmr/godis/internal/datastruct/hash"
 	"github.com/zyhnesmr/godis/internal/datastruct/list"
 	"github.com/zyhnesmr/godis/internal/datastruct/set"
+	"github.com/zyhnesmr/godis/internal/datastruct/stream"
 	"github.com/zyhnesmr/godis/internal/datastruct/zset"
 )
 
@@ -440,6 +441,25 @@ func NewZSetObject() *Object {
 // GetZSet returns the sorted set value if object is a sorted set
 func (o *Object) GetZSet() (interface{}, bool) {
 	if o == nil || o.Type != ObjTypeZSet {
+		return nil, false
+	}
+	return o.Ptr, true
+}
+
+// NewStreamObject creates a stream object
+func NewStreamObject() *Object {
+	s := stream.NewStream()
+	return &Object{
+		Type:     ObjTypeStream,
+		Encoding: ObjEncodingRadixTree,
+		Ptr:      s,
+		LRU:      uint32(time.Now().Unix()),
+	}
+}
+
+// GetStream returns the stream value if object is a stream
+func (o *Object) GetStream() (interface{}, bool) {
+	if o == nil || o.Type != ObjTypeStream {
 		return nil, false
 	}
 	return o.Ptr, true

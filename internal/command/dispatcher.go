@@ -16,12 +16,18 @@ import (
 	"github.com/zyhnesmr/godis/internal/transaction"
 )
 
+// AOFLogger is the interface for logging commands to AOF
+type AOFLogger interface {
+	LogCommand(db int, cmdName string, args []string) error
+}
+
 // Dispatcher dispatches commands to their handlers
 type Dispatcher struct {
 	commands   map[string]*Command
 	mu         sync.RWMutex
 	db         *database.DBSelector
 	txManager  *transaction.Manager
+	aofLogger  AOFLogger
 }
 
 // NewDispatcher creates a new command dispatcher
@@ -31,6 +37,13 @@ func NewDispatcher(db *database.DBSelector) *Dispatcher {
 		db:        db,
 		txManager: transaction.NewManager(),
 	}
+}
+
+// SetAOFLogger sets the AOF logger
+func (d *Dispatcher) SetAOFLogger(logger AOFLogger) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.aofLogger = logger
 }
 
 // GetTxManager returns the transaction manager
@@ -108,6 +121,13 @@ func (d *Dispatcher) dispatchCommand(ctx context.Context, conn *net.Conn, cmd *C
 		return resp.BuildErrorString(err.Error()), nil
 	}
 
+	// Log to AOF if command succeeded and is a write command
+	if !reply.IsError() && d.aofLogger != nil && cmd.HasFlag(FlagWrite) {
+		if !isReadOnlyCommand(cmd.Name) {
+			_ = d.aofLogger.LogCommand(conn.GetDB(), cmd.Name, args)
+		}
+	}
+
 	return reply.Marshal(), nil
 }
 
@@ -143,7 +163,36 @@ func (d *Dispatcher) dispatchCommandReply(ctx context.Context, conn *net.Conn, c
 	}
 
 	// Execute command
-	return cmd.Handler(cmdCtx)
+	reply, err := cmd.Handler(cmdCtx)
+
+	// Log to AOF if command succeeded and is a write command
+	if err == nil && !reply.IsError() && d.aofLogger != nil && cmd.HasFlag(FlagWrite) {
+		// Skip commands that don't modify data
+		if !isReadOnlyCommand(cmd.Name) {
+			_ = d.aofLogger.LogCommand(conn.GetDB(), cmd.Name, args)
+		}
+	}
+
+	return reply, err
+}
+
+// isReadOnlyCommand returns true if the command is read-only (even if marked as write)
+func isReadOnlyCommand(cmdName string) bool {
+	readOnly := []string{
+		"DBSIZE", "KEYS", "EXISTS", "TYPE", "TTL", "PTTL", "STRLEN",
+		"GET", "MGET", "HEXISTS", "HGET", "HMGET", "HKEYS", "HVALS", "HLEN", "HSTRLEN", "HRANDFIELD",
+		"LINDEX", "LLEN", "LRANGE",
+		"SISMEMBER", "SMISMEMBER", "SCARD", "SRANDMEMBER", "SMEMBERS", "SSCAN",
+		"ZSCORE", "ZMSCORE", "ZCARD", "ZCOUNT", "ZRANK", "ZREVRANK", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZSCAN", "ZRANDMEMBER",
+		"PUBSUB", "PING", "ECHO",
+	}
+
+	for _, roc := range readOnly {
+		if strings.ToUpper(cmdName) == roc {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcessCommand processes a command (compatibility interface)

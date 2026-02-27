@@ -12,6 +12,7 @@ import (
 
 	"github.com/zyhnesmr/godis/internal/command"
 	"github.com/zyhnesmr/godis/internal/database"
+	"github.com/zyhnesmr/godis/internal/persistence/aof"
 	"github.com/zyhnesmr/godis/internal/persistence/rdb"
 )
 
@@ -64,6 +65,9 @@ func RegisterPersistenceCommands(disp Dispatcher) {
 		LastKey:    0,
 		Categories: []string{command.CatPersistence},
 	})
+
+	// Register AOF commands
+	aof.RegisterAOFCommands(disp)
 }
 
 // SAVE synchronously saves the dataset to disk
@@ -142,4 +146,29 @@ func lastsaveCmd(ctx *command.Context) (*command.Reply, error) {
 
 	// Return Unix timestamp
 	return command.NewIntegerReply(info.ModTime().Unix()), nil
+}
+
+// LogToAOF logs a command to AOF if enabled
+func LogToAOF(db int, cmdName string, args []string) error {
+	return aof.LogCommandForAOF(db, cmdName, args)
+}
+
+// IsAOFEnabled returns true if AOF is enabled
+func IsAOFEnabled() bool {
+	return aof.IsAOFEnabled()
+}
+
+// ShouldRewriteAOF returns true if AOF rewrite should be triggered
+func ShouldRewriteAOF() bool {
+	return aof.ShouldRewriteAOF()
+}
+
+// RewriteAOFNow performs an AOF rewrite
+func RewriteAOFNow(dbs []*database.DB) error {
+	return aof.RewriteAOF(dbs)
+}
+
+// GetAOFManager returns the AOF manager
+func GetAOFManager() *aof.AOF {
+	return aof.GetAOFManager()
 }
