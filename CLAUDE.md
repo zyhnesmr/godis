@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (17/24 核心任务)
+### ✅ 已完成模块 (18/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -27,12 +27,12 @@
 | 淘汰策略 | ✅ | LRU/LFU/TTL/Random/NoEviction, allkeys-volatile变体 |
 | 发布订阅 | ✅ | PUBLISH, SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, PUBSUB |
 | 事务支持 | ✅ | MULTI, EXEC, DISCARD, WATCH, UNWATCH |
+| RDB 持久化 | ✅ | SAVE, BGSAVE, LASTSAVE, 启动自动加载, CRC64 校验 |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| RDB 持久化 | 中 | 快照保存，RDB 格式编码/解码 |
 | AOF 持久化 | 中 | 追加日志，AOF 重写 |
 | Stream 数据结构 | 低 | XADD, XREAD, XGROUP, XACK |
 | Bitmap/HyperLogLog | 低 | SETBIT, GETBIT, BITCOUNT, PFADD... |
@@ -131,6 +131,39 @@ printf "WATCH mykey\nMULTI\nSET mykey world\nEXEC\n" | redis-cli
 # 预期: EXEC 返回 nil 数组
 ```
 
+### RDB 持久化测试
+
+```bash
+# 添加测试数据
+redis-cli SET key1 "hello world"
+redis-cli SET key2 "test value"
+redis-cli HSET myhash field1 value1 field2 value2
+redis-cli LPUSH mylist elem1 elem2 elem3
+redis-cli SADD myset member1 member2 member3
+redis-cli DBSIZE
+# 预期: 5
+
+# 手动保存
+redis-cli SAVE
+# 预期: OK. Duration: XXX
+
+# 重启服务器验证数据加载
+pkill -f "bin/godis"
+./bin/godis
+redis-cli DBSIZE
+# 预期: 5
+
+# 验证各数据类型
+redis-cli GET key1         # 预期: hello world
+redis-cli HGET myhash field1  # 预期: value1
+redis-cli LPOP mylist       # 预期: elem1
+redis-cli SMEMBERS myset    # 预期: member1, member2, member3
+
+# 检查 RDB 文件
+ls -la dump.rdb
+hexdump -C dump.rdb | head -20
+```
+
 ## 技术栈
 
 - **语言**: Go 1.24+
@@ -141,6 +174,7 @@ printf "WATCH mykey\nMULTI\nSET mykey world\nEXEC\n" | redis-cli
 - **过期**: 时间轮 + 懒惰删除 + 主动扫描
 - **淘汰**: 近似LRU/LFU + EvictionPool (256 buckets)
 - **事务**: MULTI/EXEC + WATCH 乐观锁 + dirty key 追踪
+- **持久化**: RDB 快照 (Redis 格式兼容, CRC64 校验)
 
 ## 开发笔记
 
@@ -177,4 +211,5 @@ make clean      # 清理
 6. **淘汰策略** - LRU/LFU 内存管理 ✅
 7. **发布订阅** - PUBLISH, SUBSCRIBE, PSUBSCRIBE ✅
 8. **事务支持** - MULTI, EXEC, DISCARD, WATCH ✅
-9. **RDB 持久化** - 快照保存，RDB 格式编码/解码 ← 下一个
+9. **RDB 持久化** - 快照保存，RDB 格式编码/解码 ✅
+10. **AOF 持久化** - 追加日志，AOF 重写 ← 下一个

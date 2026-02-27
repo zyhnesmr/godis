@@ -20,6 +20,7 @@ import (
 	"github.com/zyhnesmr/godis/internal/expire"
 	"github.com/zyhnesmr/godis/internal/net"
 	"github.com/zyhnesmr/godis/internal/pubsub"
+	rdb2 "github.com/zyhnesmr/godis/internal/persistence/rdb"
 	"github.com/zyhnesmr/godis/pkg/log"
 )
 
@@ -92,7 +93,10 @@ func main() {
 	dispatcher := command.NewDispatcher(dbSelector)
 
 	// Register all commands
-	registerCommands(dispatcher)
+	registerCommands(dispatcher, dbSelector, cfg)
+
+	// Load RDB file if exists (after commands are registered so RDB manager is set up)
+	loadRDBOnStartup(dbSelector, cfg)
 
 	// Create server
 	srv := net.NewServer(cfg.Bind, int(cfg.Port), dispatcher)
@@ -148,7 +152,7 @@ func runEvictionChecker(ctx context.Context, dbSelector *database.DBSelector) {
 	}
 }
 
-func registerCommands(disp *command.Dispatcher) {
+func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector, cfg *config.Config) {
 	// Initialize pubsub manager
 	mgr := pubsub.NewManager()
 	commands.SetPubSubManager(mgr)
@@ -160,6 +164,11 @@ func registerCommands(disp *command.Dispatcher) {
 	// Register transaction commands with tx manager
 	commands.SetTxManager(txManager)
 	commands.RegisterTransactionCommands(disp)
+
+	// Initialize RDB manager
+	rdbMgr := rdb2.NewRDB(cfg.Dir, cfg.RdbFilename)
+	commands.SetRDBManager(rdbMgr)
+	commands.SetDBSelectorForPersistence(dbSelector)
 
 	// Register server commands
 	commands.RegisterServerCommands(disp)
@@ -185,5 +194,33 @@ func registerCommands(disp *command.Dispatcher) {
 	// Register pubsub commands
 	commands.RegisterPubSubCommands(disp)
 
+	// Register persistence commands
+	commands.RegisterPersistenceCommands(disp)
+
 	log.Info("Registered %d commands", len(disp.Commands()))
+}
+
+// loadRDBOnStartup loads the RDB file on startup if it exists
+func loadRDBOnStartup(dbSelector *database.DBSelector, cfg *config.Config) {
+	rdbMgr := rdb2.NewRDB(cfg.Dir, cfg.RdbFilename)
+	if !rdbMgr.FileExists() {
+		log.Info("No RDB file found, starting with empty database")
+		return
+	}
+
+	log.Info("Loading RDB file: %s", rdbMgr.GetFilename())
+	dbs := make([]*database.DB, dbSelector.Count())
+	for i := 0; i < dbSelector.Count(); i++ {
+		db, err := dbSelector.GetDB(i)
+		if err != nil {
+			log.Error("Failed to get DB %d: %v", i, err)
+			continue
+		}
+		dbs[i] = db
+	}
+	if err := rdbMgr.Load(dbs); err != nil {
+		log.Warn("Failed to load RDB file: %v", err)
+	} else {
+		log.Info("RDB file loaded successfully")
+	}
 }

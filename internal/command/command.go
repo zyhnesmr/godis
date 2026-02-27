@@ -71,6 +71,9 @@ const (
 	CatGeneric     = "generic"
 	CatHyperLogLog = "hyperloglog"
 	CatGeo         = "geo"
+	CatPersistence = "persistence"
+	CatFast        = "fast"
+	CatKeySpace    = "keyspace"
 )
 
 // Reply represents a command reply
