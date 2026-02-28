@@ -5,8 +5,8 @@
 *.so
 *.dylib
 bin/
-godis
-godis.exe
+**/godis
+**/godis.exe
 **/.idea
 *.iml
 *.DS_Store
