@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zyhnesmr/godis/internal/database"
+	"github.com/zyhnesmr/godis/internal/datastruct/zset"
 )
 
 // RDB opcodes
@@ -378,24 +379,14 @@ func (e *Encoder) writeZSetValue(obj *database.Object) error {
 		return errors.New("invalid zset value")
 	}
 
-	// Type assert to get RangeByRank method
-	type zsetAller interface {
-		RangeByRank(int, int) interface{}
-	}
-
-	zsetImpl, ok := zsetInt.(zsetAller)
+	// Type assert to actual ZSet type
+	zs, ok := zsetInt.(*zset.ZSet)
 	if !ok {
-		return errors.New("zset does not implement RangeByRank")
+		return errors.New("zset is not *zset.ZSet type")
 	}
 
 	// Get all elements (rank 0 to -1 means all)
-	result := zsetImpl.RangeByRank(0, -1)
-
-	// Type assert to get slice
-	members, ok := result.([]interface{})
-	if !ok {
-		return errors.New("zset RangeByRank did not return []interface{}")
-	}
+	members := zs.Range(0, -1)
 
 	// Write length
 	if err := e.writeLength(uint64(len(members))); err != nil {
@@ -403,16 +394,7 @@ func (e *Encoder) writeZSetValue(obj *database.Object) error {
 	}
 
 	// Write member-score pairs
-	for _, m := range members {
-		// Type assert to get member and score
-		zm, ok := m.(struct {
-			Member string
-			Score  float64
-		})
-		if !ok {
-			continue
-		}
-
+	for _, zm := range members {
 		// Write member
 		if err := e.writeString(zm.Member); err != nil {
 			return err
