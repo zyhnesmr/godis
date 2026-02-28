@@ -1090,3 +1090,177 @@ redis-cli GEORADIUS Sicily 15 37 200 km WITHDIST
 # 4) "190.4425"
 ```
 
+---
+
+## 十三、Lua 脚本模块
+
+### 13.1 Lua 脚本概述
+
+Godis 使用 [gopher-lua](https://github.com/yuin/gopher-lua) 解释器实现 Redis 兼容的 Lua 脚本功能。Lua 脚本提供了：
+- 原子性执行：脚本执行期间不会插入其他命令
+- 复杂操作：支持条件判断、循环、函数等编程特性
+- 性能优化：通过 SCRIPT LOAD 预加载脚本，减少网络传输
+
+### 13.2 核心命令
+
+| 命令 | 格式 | 说明 |
+|------|------|------|
+| EVAL | `EVAL script numkeys key [key ...] arg [arg ...]` | 执行 Lua 脚本 |
+| EVALSHA | `EVALSHA sha1 numkeys key [key ...] arg [arg ...]` | 执行已缓存的脚本 |
+| SCRIPT LOAD | `SCRIPT LOAD script` | 加载脚本并返回 SHA1 |
+| SCRIPT EXISTS | `SCRIPT EXISTS sha1 [sha1 ...]` | 检查脚本是否存在 |
+| SCRIPT FLUSH | `SCRIPT FLUSH` | 清空脚本缓存 |
+| SCRIPT KILL | `SCRIPT KILL` | 终止脚本执行 |
+| SCRIPT SHOW | `SCRIPT SHOW sha1` | 显示脚本内容 |
+
+### 13.3 Lua 环境变量
+
+脚本执行时，可访问以下全局变量：
+
+```lua
+KEYS    -- Redis key 数组（由 numkeys 指定）
+ARGV    -- 参数数组（剩余的所有参数）
+redis   -- Redis API 对象
+```
+
+### 13.4 redis.call() API
+
+```lua
+-- 执行 Redis 命令
+redis.call('SET', 'key', 'value')
+redis.call('GET', 'key')
+redis.call('INCR', 'counter')
+redis.call('DEL', 'key1', 'key2')
+
+-- 带返回值
+local value = redis.call('GET', 'mykey')
+local count = redis.call('INCR', 'counter')
+```
+
+### 13.5 返回值类型转换
+
+| Lua 类型 | Redis 返回值 |
+|----------|-------------|
+| number | Integer Reply |
+| string | Bulk String Reply |
+| boolean | Integer Reply (1=true, 0=false) |
+| table | Array Reply |
+| nil | Nil Reply |
+
+### 13.6 脚本示例
+
+```lua
+-- 简单返回
+return "hello world"
+
+-- 使用 KEYS 和 ARGV
+return {KEYS[1], ARGV[1], ARGV[2]}
+
+-- 条件判断
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return redis.call('GET', KEYS[1])
+else
+    return "not found"
+end
+
+-- 循环
+local sum = 0
+for i = 1, 10 do
+    sum = sum + i
+end
+return sum
+
+-- 使用 redis.call 复杂操作
+local current = redis.call('GET', KEYS[1])
+if current == false then
+    current = 0
+end
+redis.call('SET', KEYS[1], current + ARGV[1])
+return current + ARGV[1]
+```
+
+### 13.7 实现文件
+
+| 文件 | 说明 |
+|------|------|
+| `internal/script/manager.go` | ScriptManager、Lua 状态管理、redis.call 实现 |
+| `internal/command/commands/script.go` | EVAL/EVALSHA/SCRIPT 命令处理 |
+
+### 13.8 ScriptManager 结构
+
+```go
+type ScriptManager struct {
+    mu      sync.RWMutex
+    scripts map[string]string // SHA1 -> script content
+}
+
+type LuaContext struct {
+    L           *lua.LState
+    DB          *database.DB
+    Conn        interface{}
+    NumReplies  int
+    Keys        []string
+    Flags       []string
+    ConvertedTo map[interface{}]interface{}
+}
+```
+
+### 13.9 执行流程
+
+```
+EVAL/EVALSHA 请求
+      │
+      ▼
+┌─────────────────┐
+│ 解析参数        │
+│ script/keys/args│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ 创建 Lua State  │
+│ 注册 redis API  │
+│ 设置 KEYS/ARGV  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ 编译并执行脚本  │
+│ L.DoString()    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ 获取返回值      │
+│ L.Get(-1)       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ 转换为 Reply    │
+│ 返回客户端      │
+└─────────────────┘
+```
+
+### 13.10 使用示例
+
+```bash
+# EVAL 基本用法
+redis-cli EVAL "return 'hello'" 0
+# "hello"
+
+# 使用 redis.call
+redis-cli EVAL "return redis.call('SET', 'k', 'v')" 0
+# OK
+
+# KEYS 和 ARGV
+redis-cli EVAL "return {KEYS[1], ARGV[1]}" 1 mykey arg1
+# 1) "mykey"
+# 2) "arg1"
+
+# SCRIPT LOAD + EVALSHA
+SHA1=$(redis-cli SCRIPT LOAD "return 42")
+redis-cli EVALSHA "$SHA1" 0
+# "42"
+```
+
