@@ -16,7 +16,7 @@ import (
 // Format: <millisecondsTimestamp>-<sequenceNumber>
 type StreamID struct {
 	Timestamp int64 // Milliseconds since epoch
-	Sequence  int64  // Sequence number
+	Sequence  int64 // Sequence number
 }
 
 // ParseStreamID parses a stream ID from string format
@@ -88,9 +88,9 @@ func NewStreamID(timestamp int64, sequence int64) StreamID {
 
 // StreamEntry represents a single message in a stream
 type StreamEntry struct {
-	ID       StreamID
-	Fields   map[string]string
-	mu        sync.RWMutex
+	ID     StreamID
+	Fields map[string]string
+	mu     sync.RWMutex
 }
 
 // NewStreamEntry creates a new stream entry
@@ -131,12 +131,12 @@ func (e *StreamEntry) FieldCount() int {
 
 // Stream represents a Redis Stream data structure
 type Stream struct {
-	mu         sync.RWMutex
-	entries    []*StreamEntry // Maintained in order by ID
-	lastID     StreamID       // ID of the last entry
-	length     int64          // Number of entries
-	radixTree  *RadixTree      // Index for fast lookup by ID prefix
-	cgroups    *ConsumerGroupManager
+	mu        sync.RWMutex
+	entries   []*StreamEntry // Maintained in order by ID
+	lastID    StreamID       // ID of the last entry
+	length    int64          // Number of entries
+	radixTree *RadixTree     // Index for fast lookup by ID prefix
+	cgroups   *ConsumerGroupManager
 }
 
 // NewStream creates a new stream
@@ -144,7 +144,7 @@ func NewStream() *Stream {
 	return &Stream{
 		entries:   make([]*StreamEntry, 0, 64),
 		lastID:    StreamID{},
-		radixTree:  NewRadixTree(),
+		radixTree: NewRadixTree(),
 		cgroups:   NewConsumerGroupManager(),
 	}
 }
@@ -387,7 +387,7 @@ func (s *Stream) DeleteByID(ids []StreamID) int64 {
 	s.rebuildRadixTree()
 
 	return removed
-	}
+}
 
 // DeleteByID deletes entries by their IDs (used by XTRIM)
 // Returns the number of entries deleted

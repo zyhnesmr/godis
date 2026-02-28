@@ -219,7 +219,7 @@ func EncodeToBase32(longitude, latitude float64, precision int) string {
 func CalculateBoundingBox(center *Point, radiusMeters float64) (minLon, maxLon, minLat, maxLat float64) {
 	// Convert radius to degrees (approximate)
 	latDelta := (radiusMeters / 111320) * 180 / math.Pi
-	lonDelta := (radiusMeters / (111320*math.Cos(toRadians(center.Latitude)))) * 180 / math.Pi
+	lonDelta := (radiusMeters / (111320 * math.Cos(toRadians(center.Latitude)))) * 180 / math.Pi
 
 	minLon = center.Longitude - lonDelta
 	maxLon = center.Longitude + lonDelta

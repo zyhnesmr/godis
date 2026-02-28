@@ -23,11 +23,11 @@ type AOFLogger interface {
 
 // Dispatcher dispatches commands to their handlers
 type Dispatcher struct {
-	commands   map[string]*Command
-	mu         sync.RWMutex
-	db         *database.DBSelector
-	txManager  *transaction.Manager
-	aofLogger  AOFLogger
+	commands  map[string]*Command
+	mu        sync.RWMutex
+	db        *database.DBSelector
+	txManager *transaction.Manager
+	aofLogger AOFLogger
 }
 
 // NewDispatcher creates a new command dispatcher

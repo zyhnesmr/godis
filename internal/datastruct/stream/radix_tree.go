@@ -11,7 +11,7 @@ import (
 // RadixNode represents a node in the radix tree
 type RadixNode struct {
 	children map[byte]*RadixNode
-	entry   *StreamEntry
+	entry    *StreamEntry
 }
 
 // RadixTree is a radix tree for indexing stream entries by ID

@@ -32,7 +32,7 @@ type ZMember struct {
 type ZSet struct {
 	mu       sync.RWMutex
 	dict     map[string]float64 // member -> score for O(1) lookups
-	skiplist *SkipList           // for ordered operations
+	skiplist *SkipList          // for ordered operations
 	encoding ZSetEncoding
 }
 

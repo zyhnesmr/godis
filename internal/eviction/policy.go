@@ -74,11 +74,11 @@ func PolicyFromString(s string) (PolicyType, error) {
 
 // KeyInfo holds information about a key for eviction decisions
 type KeyInfo struct {
-	Key       string
-	LRU       uint32        // LRU timestamp or LFU data
-	ExpiresAt int64         // Expiration timestamp, 0 if no expiration
-	Size      int64         // Approximate size in bytes
-	LastAccess time.Time    // Last access time
+	Key        string
+	LRU        uint32    // LRU timestamp or LFU data
+	ExpiresAt  int64     // Expiration timestamp, 0 if no expiration
+	Size       int64     // Approximate size in bytes
+	LastAccess time.Time // Last access time
 }
 
 // DBAccessor provides access to database for eviction
@@ -316,7 +316,7 @@ func (p *LFUPolicy) FillPool(db DBAccessor, samples int) {
 
 		// For LFU, lower counter means better eviction candidate
 		// The LRU field contains LFU data: low 8 bits = counter
-		lfuScore := 255 - uint8(info.LRU & 0xff)
+		lfuScore := 255 - uint8(info.LRU&0xff)
 
 		p.pool.Insert(key, uint32(lfuScore), info.Size, info.ExpiresAt)
 	}
@@ -384,7 +384,7 @@ type TTLPolicy struct {
 func NewTTLPolicy() *TTLPolicy {
 	return &TTLPolicy{
 		basePolicy: basePolicy{policyType: PolicyVolatileTTL},
-		pool:      NewEvictionPool(16),
+		pool:       NewEvictionPool(16),
 	}
 }
 
@@ -558,10 +558,10 @@ func (p *EvictionPool) InsertWithTTL(key string, ttl, idle uint32, size int64) {
 
 	// Add new entry
 	entry := &PoolEntry{
-		Key:       key,
-		Score:     ttl,
-		Size:      size,
-		LastUsed:  idle,
+		Key:      key,
+		Score:    ttl,
+		Size:     size,
+		LastUsed: idle,
 	}
 
 	p.buckets[bucketIdx] = append(p.buckets[bucketIdx], entry)

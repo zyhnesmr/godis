@@ -20,10 +20,10 @@ import (
 	"github.com/zyhnesmr/godis/internal/eviction"
 	"github.com/zyhnesmr/godis/internal/expire"
 	"github.com/zyhnesmr/godis/internal/net"
-	"github.com/zyhnesmr/godis/internal/pubsub"
-	"github.com/zyhnesmr/godis/internal/script"
 	aof2 "github.com/zyhnesmr/godis/internal/persistence/aof"
 	rdb2 "github.com/zyhnesmr/godis/internal/persistence/rdb"
+	"github.com/zyhnesmr/godis/internal/pubsub"
+	"github.com/zyhnesmr/godis/internal/script"
 	"github.com/zyhnesmr/godis/pkg/log"
 )
 

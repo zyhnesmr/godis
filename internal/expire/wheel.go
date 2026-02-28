@@ -19,8 +19,8 @@ type TimeWheel struct {
 	wheelSize int64         // Number of slots in the wheel
 
 	// Current state
-	currentTick int64       // Current tick position
-	startTime   time.Time   // Start time of the wheel
+	currentTick int64     // Current tick position
+	startTime   time.Time // Start time of the wheel
 
 	// The wheel buckets
 	buckets []*Bucket
@@ -57,8 +57,8 @@ func NewTimeWheel(tickMs int64, wheelSize int64) *TimeWheel {
 	}
 
 	return &TimeWheel{
-		tick:      time.Duration(tickMs) * time.Millisecond,
-		wheelSize: wheelSize,
+		tick:        time.Duration(tickMs) * time.Millisecond,
+		wheelSize:   wheelSize,
 		currentTick: 0,
 		startTime:   time.Now(),
 		buckets:     buckets,

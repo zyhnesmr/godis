@@ -121,7 +121,7 @@ func (hll *HyperLogLog) Count() int64 {
 	}
 
 	// Apply correction for large cardinalities
-	threshold := (1.0/30.0) * float64(numRegisters) * float64(numRegisters)
+	threshold := (1.0 / 30.0) * float64(numRegisters) * float64(numRegisters)
 	if estimation > threshold {
 		ratio := estimation / (float64(numRegisters) * float64(numRegisters))
 		if ratio < 1.0 {

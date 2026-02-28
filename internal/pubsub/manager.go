@@ -15,10 +15,10 @@ import (
 
 // Manager manages publish/subscribe subscriptions
 type Manager struct {
-	mu              sync.RWMutex
-	channels        map[string]*channelSubscribers // channel -> subscribers
-	patternConns    map[string]map[*net.Conn]struct{} // pattern -> connections
-	connPatterns    map[*net.Conn]map[string]struct{} // connection -> patterns
+	mu           sync.RWMutex
+	channels     map[string]*channelSubscribers    // channel -> subscribers
+	patternConns map[string]map[*net.Conn]struct{} // pattern -> connections
+	connPatterns map[*net.Conn]map[string]struct{} // connection -> patterns
 }
 
 // channelSubscribers manages subscribers for a single channel

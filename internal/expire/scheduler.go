@@ -18,10 +18,10 @@ type Scheduler struct {
 	mgr *Manager
 
 	// Scheduling control
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	running  atomic.Bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	running atomic.Bool
 
 	// Configuration
 	config Config

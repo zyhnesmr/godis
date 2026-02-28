@@ -86,7 +86,7 @@ func evalCmd(ctx *command.Context) (*command.Reply, error) {
 		if argsStart > len(ctx.Args) {
 			return nil, errors.New("Number of keys can't be greater than number of args")
 		}
-		keys = ctx.Args[2:2+numKeys]
+		keys = ctx.Args[2 : 2+numKeys]
 	}
 
 	if argsStart < len(ctx.Args) {
@@ -127,7 +127,7 @@ func evalshaCmd(ctx *command.Context) (*command.Reply, error) {
 		if argsStart > len(ctx.Args) {
 			return nil, errors.New("Number of keys can't be greater than number of args")
 		}
-		keys = ctx.Args[2:2+numKeys]
+		keys = ctx.Args[2 : 2+numKeys]
 	}
 
 	if argsStart < len(ctx.Args) {

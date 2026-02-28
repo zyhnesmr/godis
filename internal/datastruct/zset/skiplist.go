@@ -17,20 +17,20 @@ const (
 
 // skipListNode represents a node in the skip list
 type skipListNode struct {
-	member  string
-	score   float64
-	forward []*skipListNode
-	span    []uint32 // span[i] is the distance to the next node at level i
+	member   string
+	score    float64
+	forward  []*skipListNode
+	span     []uint32 // span[i] is the distance to the next node at level i
 	backward *skipListNode
 }
 
 // SkipList implements a skip list for sorted set
 type SkipList struct {
-	head     *skipListNode
-	tail     *skipListNode
-	length   uint64
-	level    int
-	mu       sync.RWMutex
+	head   *skipListNode
+	tail   *skipListNode
+	length uint64
+	level  int
+	mu     sync.RWMutex
 }
 
 // newSkipListNode creates a new skip list node

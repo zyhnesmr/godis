@@ -93,7 +93,7 @@ func (d *Decoder) Decode(dbs []*database.DB) error {
 			_, err = d.readLength()
 			if err != nil {
 				return err
-				}
+			}
 		case OpcodeExpireTime, OpcodeExpireMS:
 			// This should be followed by a key-value pair
 			// Read the key-value pair with expiration
@@ -240,7 +240,7 @@ func (d *Decoder) readKeyValuePairs(db *database.DB) error {
 		}
 
 		// Read value type
-	 valueType, err := d.r.ReadByte()
+		valueType, err := d.r.ReadByte()
 		if err != nil {
 			return err
 		}

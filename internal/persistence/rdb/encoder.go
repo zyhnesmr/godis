@@ -48,8 +48,8 @@ const (
 // Encoder encodes database state to RDB format
 type Encoder struct {
 	w   *bufio.Writer
-	crc  hash.Hash64
-	pos  int // track position for CRC
+	crc hash.Hash64
+	pos int // track position for CRC
 }
 
 // NewEncoder creates a new RDB encoder

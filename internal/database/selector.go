@@ -13,9 +13,9 @@ import (
 
 // DBSelector manages multiple databases
 type DBSelector struct {
-	dbs      []*DB
-	mu       sync.RWMutex
-	count    int
+	dbs   []*DB
+	mu    sync.RWMutex
+	count int
 
 	// Eviction management
 	evictionMgr *eviction.Manager
@@ -37,8 +37,8 @@ func NewDBSelector(count int) *DBSelector {
 	}
 
 	s := &DBSelector{
-		dbs:    dbs,
-		count:  count,
+		dbs:   dbs,
+		count: count,
 	}
 
 	// Initialize eviction manager

@@ -11,8 +11,8 @@ import (
 
 // ExpireKeyType represents the type of key in expire entries
 type ExpireKeyType struct {
-	DB   int
-	Key  string
+	DB  int
+	Key string
 }
 
 // ExpireEntry represents an entry in the expire set
@@ -47,9 +47,9 @@ type Manager struct {
 // NewManager creates a new expire manager
 func NewManager(onExpire func(db int, key string)) *Manager {
 	return &Manager{
-		enabled:     true,
-		timeWheel:   NewTimeWheel(10, 512), // 10ms tick, 512 slots
-		expireMap:   make(map[string]int64),
+		enabled:      true,
+		timeWheel:    NewTimeWheel(10, 512), // 10ms tick, 512 slots
+		expireMap:    make(map[string]int64),
 		onExpireFunc: onExpire,
 	}
 }

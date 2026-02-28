@@ -25,9 +25,9 @@ import (
 type FsyncStrategy int
 
 const (
-	FsyncAlways FsyncStrategy = iota // fsync after every write
-	FsyncEverySec                    // fsync every second
-	FsyncNo                          // let OS decide
+	FsyncAlways   FsyncStrategy = iota // fsync after every write
+	FsyncEverySec                      // fsync every second
+	FsyncNo                            // let OS decide
 )
 
 // AOF manages AOF persistence
@@ -44,7 +44,7 @@ type AOF struct {
 	// Statistics
 	lastRewriteTime    time.Time
 	currentRewriteSize int64
-	baseSize          int64
+	baseSize           int64
 
 	// Rewrite state
 	rewriteInProgress atomic.Bool
@@ -57,10 +57,10 @@ type AOF struct {
 // NewAOF creates a new AOF manager
 func NewAOF(dirname, dbname string, cfg *config.Config) *AOF {
 	a := &AOF{
-		dirname:  dirname,
-		dbname:   dbname,
-		cfg:      cfg,
-		fsyncStr: parseFsyncStrategy(cfg.AppendFsync),
+		dirname:   dirname,
+		dbname:    dbname,
+		cfg:       cfg,
+		fsyncStr:  parseFsyncStrategy(cfg.AppendFsync),
 		fsyncChan: make(chan struct{}, 1),
 		closeChan: make(chan struct{}),
 	}

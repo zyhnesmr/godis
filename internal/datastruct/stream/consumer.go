@@ -10,17 +10,17 @@ import (
 
 // ConsumerGroup represents a consumer group in a stream
 type ConsumerGroup struct {
-	name     string
-	lastID   StreamID      // Last delivered ID
+	name      string
+	lastID    StreamID // Last delivered ID
 	consumers map[string]*Consumer
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 }
 
 // Consumer represents a consumer within a consumer group
 type Consumer struct {
-	name      string
+	name       string
 	pendingIDs map[StreamID]int64 // Pending IDs with their timestamp
-	mu        sync.RWMutex
+	mu         sync.RWMutex
 }
 
 // NewConsumerGroup creates a new consumer group

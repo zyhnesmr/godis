@@ -13,35 +13,35 @@ import (
 
 // Stats holds eviction statistics
 type Stats struct {
-	Policy              PolicyType
-	CurrentMemory       int64
-	MaxMemory           int64
-	KeysEvicted         int64
-	BytesFreed          int64
-	LastEvictionTime    time.Time
-	EvictionCycles      int64
-	OOMCount            int64
-	PoolSize            int
+	Policy           PolicyType
+	CurrentMemory    int64
+	MaxMemory        int64
+	KeysEvicted      int64
+	BytesFreed       int64
+	LastEvictionTime time.Time
+	EvictionCycles   int64
+	OOMCount         int64
+	PoolSize         int
 }
 
 // Manager manages eviction for multiple databases
 type Manager struct {
 	sync.RWMutex
 
-	policy      Policy
-	policyType  PolicyType
-	maxMemory   int64
-	enabled     bool
+	policy     Policy
+	policyType PolicyType
+	maxMemory  int64
+	enabled    bool
 
 	// Statistics
-	keysEvicted  int64
-	bytesFreed   int64
-	evictionCycles int64
-	oomCount     int64
+	keysEvicted      int64
+	bytesFreed       int64
+	evictionCycles   int64
+	oomCount         int64
 	lastEvictionTime time.Time
 
 	// Configuration
-	samples      int
+	samples int
 
 	// Callback to get current memory usage
 	getMemoryUsage func() int64
