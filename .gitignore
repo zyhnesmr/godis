@@ -4,16 +4,27 @@
 *.dll
 *.so
 *.dylib
+bin/
+godis
+godis.exe
 **/.idea
 *.iml
 *.DS_Store
+
 # Test binary, built with `go test -c`
 *.test
 *.log
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
 internal/model/sql
+
+# Build artifacts
+*.aof
+*.rdb
+dump.rdb
+appendonly.aof
 
