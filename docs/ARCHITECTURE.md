@@ -123,6 +123,7 @@ godis/
 │   │   │   ├── zset.go             # 有序集合命令 (ZADD, ZRANGE...)
 │   │   │   ├── bitmap.go           # 位图命令 (SETBIT, GETBIT, BITOP...)
 │   │   │   ├── hyperloglog.go      # HyperLogLog 命令 (PFADD, PFCOUNT...)
+│   │   │   ├── geo.go              # 地理位置命令 (GEOADD, GEODIST...)
 │   │   │   ├── pubsub.go           # 发布订阅命令 (PUBLISH, SUBSCRIBE...)
 │   │   │   ├── stream.go           # 流命令 (XADD, XREAD...)
 │   │   │   ├── transaction.go      # 事务命令 (MULTI, EXEC...)
@@ -169,7 +170,7 @@ godis/
 │   │   │   └── hll.go              # HyperLogLog 基数估算
 │   │   │
 │   │   └── geo/
-│   │       └── geo.go              # 地理位置实现 (待开发)
+│   │       └── geohash.go          # 地理位置 Geohash 编码/距离计算
 │   │
 │   ├── expire/
 │   │   ├── expire.go               # 过期管理器
@@ -535,7 +536,15 @@ internal/persistence/aof/
   - [x] PFCOUNT 估算基数
   - [x] PFMERGE 合并 HLL
   - [x] 10-bit precision, 1024 registers
-- [ ] Geo 地理位置
+- [x] Geo 地理位置
+  - [x] GEOADD 添加位置
+  - [x] GEODIST 计算距离
+  - [x] GEOHASH 获取 geohash
+  - [x] GEOPOS 获取坐标
+  - [x] GEORADIUS 半径查询
+  - [x] GEORADIUSBYMEMBER 成员半径查询
+  - [x] 52-bit geohash 编码
+  - [x] Haversine 距离公式
 
 ### 阶段六: 优化与测试 (Week 10)
 - [ ] 性能优化
@@ -942,4 +951,142 @@ PFMERGE dest hll1 hll2 ...
 | 10,000 | 10,000 | ~10,000 | < 1% |
 | 100,000 | 100,000 | ~99,500 | < 1% |
 | 1,000,000 | 1,000,000 | ~1,002,000 | < 1% |
+
+---
+
+## 十二、Geo 实现设计 ✅
+
+### 12.1 Geo 数据结构
+
+Geo 地理位置数据结构基于 ZSet 实现，使用 Geohash 编码将经纬度转换为 ZSet 的分数。
+
+```
+Geo 结构 (基于 ZSet):
+┌─────────────────────────────────────────────────────────┐
+│  ZSet (sorted set)                                        │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │ Member (string)  │  Score (geohash)               │   │
+│  ├─────────────────┼──────────────────────────────┤   │
+│  │ "Palermo"       │  1262084552082720              │   │
+│  │ "Catania"       │  1262094435601205              │   │
+│  └─────────────────┴──────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+
+Geohash 编码 (52-bit):
+┌─────────────────────────────────────────────────────────┐
+│  位交织: 经度 26 bit + 纬度 26 bit = 52 bit total       │
+│                                                          │
+│  经度范围: -180 ~ +180                                 │
+│  纬度范围: -85.05112878 ~ +85.05112878                  │
+│                                                          │
+│  编码步骤:                                                │
+│  1. 归一化: norm = (coord - min) / (max - min)            │
+│  2. 量化: quantized = uint64(norm * 2^26)                 │
+│  3. 交织: even_bits = lonBits, odd_bits = latBits         │
+└─────────────────────────────────────────────────────────┘
+```
+
+**实现要点:**
+1. **52-bit Geohash**: 经度 26 bit + 纬度 26 bit 交织存储
+2. **ZSet 存储**: 使用 ZSet 的 score 存储 geohash，member 存储地点名称
+3. **Haversine 公式**: 计算两点间的大圆距离
+4. **距离单位**: 支持 m/m/ft/km
+
+### 12.2 Geo 核心命令 ✅
+
+| 命令 | 功能 | 状态 |
+|------|------|------|
+| GEOADD | 添加地理位置 | ✅ |
+| GEODIST | 计算两点距离 | ✅ |
+| GEOHASH | 获取 geohash 字符串 | ✅ |
+| GEOPOS | 获取位置坐标 | ✅ |
+| GEORADIUS | 半径查询 | ✅ |
+| GEORADIUSBYMEMBER | 成员半径查询 | ✅ |
+
+**GEOADD 选项:**
+```
+NX: 只添加不存在的成员
+XX: 只更新已存在的成员
+CH: 返回修改的数量 (包括新增和更新)
+```
+
+**GEORADIUS 选项:**
+```
+WITHCOORD:  返回坐标
+WITHDIST:   返回距离
+WITHHASH:   返回原始 geohash
+COUNT n:    限制返回数量
+ASC/DESC:   排序方向
+STORE key:  结果存储到指定 ZSet
+STOREDIST key: 结果以距离为分数存储
+```
+
+### 12.3 Geohash 编码示例
+
+```
+经度: 13.361389  纬度: 38.115556 (Palermo)
+
+1. 归一化:
+   lonNorm = (13.361389 - (-180)) / 180 = 0.574229...
+   latNorm = (38.115556 - (-85.0511)) / 170.1022 = 0.72141...
+
+2. 量化 (26-bit):
+   lonVal = uint64(0.574229 * 2^26) = 40661674
+   latVal = uint64(0.72141 * 2^26) = 51056636
+
+3. 二进制:
+   lonBits = 000000001001001101011011101010 (26 bits)
+   latBits = 000000001100000101110111001100010 (26 bits)
+
+4. 交织:
+   geohash = 0000 0000 0100 0010 0110 0001 1001 0100 0111 1011 1000 1010
+   ↓       ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓
+   score = 1262084552082720
+```
+
+### 12.4 距离计算 (Haversine 公式)
+
+```
+Haversine 公式计算两点间的大圆距离:
+
+a = sin²(Δlat/2) + cos(lat1) × cos(lat2) × sin²(Δlon/2)
+c = 2 × atan2(√a, √(1-a))
+d = R × c
+
+其中:
+- R = 6372797.5608 米 (地球半径)
+- lat1, lat2: 两点纬度 (弧度)
+- lon1, lon2: 两点经度 (弧度)
+```
+
+### 12.5 实现文件
+
+| 文件 | 说明 |
+|------|------|
+| `internal/datastruct/geo/geohash.go` | Geohash 编码/解码、距离计算 |
+| `internal/command/commands/geo.go` | Geo 命令处理 |
+
+### 12.6 使用示例
+
+```bash
+# 添加意大利城市位置
+redis-cli GEOADD Sicily 13.361389 38.115556 Palermo \
+                         15.087269 37.502669 Catania
+
+# 获取位置坐标
+redis-cli GEOPOS Sicily Palermo
+# 1) "13.36138665676117"
+# 2) "38.11555512813572"
+
+# 计算距离
+redis-cli GEODIST Sicily Palermo Catania km
+# "166.2742"
+
+# 查找 200km 范围内的城市
+redis-cli GEORADIUS Sicily 15 37 200 km WITHDIST
+# 1) "Catania"
+# 2) "56.4411"
+# 3) "Palermo"
+# 4) "190.4425"
+```
 

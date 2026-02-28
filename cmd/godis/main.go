@@ -277,6 +277,9 @@ func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector,
 	// Register hyperloglog commands
 	commands.RegisterHyperLogLogCommands(disp)
 
+	// Register geo commands
+	commands.RegisterGeoCommands(disp)
+
 	log.Info("Registered %d commands", len(disp.Commands()))
 
 	return aofMgr

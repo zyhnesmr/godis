@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (22/24 核心任务)
+### ✅ 已完成模块 (23/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -32,12 +32,12 @@
 | AOF 持久化 | ✅ | APPENDONLY, BGREWRITEAOF, AOF 重写, Fsync 策略 |
 | Bitmap 数据结构 | ✅ | SETBIT, GETBIT, BITCOUNT, BITPOS, BITOP, BITFIELD, BITFIELD_RO |
 | HyperLogLog 数据结构 | ✅ | PFADD, PFCOUNT, PFMERGE |
+| Geo 地理位置 | ✅ | GEOADD, GEODIST, GEOHASH, GEOPOS, GEORADIUS, GEORADIUSBYMEMBER |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| 地理位置 | 低 | GEOADD, GEORADIUS, GEOHASH... |
 | Lua 脚本 | 低 | EVAL, EVALSHA, SCRIPT LOAD/FLUSH |
 
 ## 测试验证
@@ -331,6 +331,46 @@ redis-cli PFCOUNT bigset
 # 预期: 接近 1000 的估算值
 ```
 
+### Geo 地理位置测试
+
+```bash
+# GEOADD - 添加地理位置
+redis-cli GEOADD Sicily 13.361389 38.115556 "Palermo" \
+                         15.087269 37.502669 "Catania"
+# 预期: (integer) 2
+
+# GEOPOS - 获取位置坐标
+redis-cli GEOPOS Sicily Palermo
+# 预期: 1) "13.36138665676117"
+# 预期: 2) "38.11555512813572"
+
+# GEODIST - 计算两点距离
+redis-cli GEODIST Sicily Palermo Catania
+# 预期: "166274.1539" (米)
+
+redis-cli GEODIST Sicily Palermo Catania km
+# 预期: "166.2742" (千米)
+
+# GEOHASH - 获取 geohash 字符串
+redis-cli GEOHASH Sicily Palermo
+# 预期: "sqc8b49rny"
+
+# GEORADIUS - 查找附近位置
+redis-cli GEORADIUS Sicily 15 37 200 km WITHDIST
+# 预期: 返回 200km 内的位置及其距离
+
+redis-cli GEORADIUS Sicily 15 37 200 km WITHCOORD WITHDIST WITHHASH
+# 预期: 返回位置、坐标、距离和 geohash
+
+# GEORADIUSBYMEMBER - 查找指定成员附近的位置
+redis-cli GEORADIUSBYMEMBER Sicily Palermo 100 km WITHDIST
+# 预期: 返回 Palermo 100km 内的位置
+
+# GEOADD CH 选项 - 更新位置
+redis-cli GEOADD Sicily CH 13.36 38.12 "Palermo"
+# 预期: 返回更新数量
+```
+
 ## 技术栈
 
 - **语言**: Go 1.24+
@@ -344,6 +384,7 @@ redis-cli PFCOUNT bigset
 - **持久化**: RDB 快照 + AOF 日志 (Redis 格式兼容, CRC64 校验)
 - **Bitmap**: String 类型扩展，位操作 (AND/OR/XOR/NOT)
 - **HyperLogLog**: 基数估算算法 (10-bit precision, 1024 registers)
+- **Geo**: 地理位置，Geohash 编码，Haversine 距离计算
 
 ## 开发笔记
 
@@ -384,6 +425,7 @@ make clean      # 清理
 10. **AOF 持久化** - 追加日志，AOF 重写 ✅
 11. **Bitmap** - 位操作，SETBIT/GETBIT/BITOP/BITFIELD ✅
 12. **HyperLogLog** - 基数估算，PFADD/PFCOUNT/PFMERGE ✅
+13. **Geo 地理位置** - GEOADD/GEODIST/GEOHASH/GEOPOS/GEORADIUS/GEORADIUSBYMEMBER ✅
 
 ## 已修复 Bug
 
@@ -397,3 +439,4 @@ make clean      # 清理
 |------|------|----------|
 | Bitmap 模块 | SETBIT/GETBIT/BITCOUNT/BITPOS/BITOP/BITFIELD/BITFIELD_RO | 2026-02-28 |
 | HyperLogLog 模块 | PFADD/PFCOUNT/PFMERGE 基数估算 (10-bit precision) | 2026-02-28 |
+| Geo 地理位置模块 | GEOADD/GEODIST/GEOHASH/GEOPOS/GEORADIUS/GEORADIUSBYMEMBER | 2026-02-28 |
