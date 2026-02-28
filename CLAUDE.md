@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (23/24 核心任务)
+### ✅ 已完成模块 (24/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -33,12 +33,7 @@
 | Bitmap 数据结构 | ✅ | SETBIT, GETBIT, BITCOUNT, BITPOS, BITOP, BITFIELD, BITFIELD_RO |
 | HyperLogLog 数据结构 | ✅ | PFADD, PFCOUNT, PFMERGE |
 | Geo 地理位置 | ✅ | GEOADD, GEODIST, GEOHASH, GEOPOS, GEORADIUS, GEORADIUSBYMEMBER |
-
-### ⏳ 待开发模块
-
-| 模块 | 优先级 | 涉及命令 |
-|------|--------|----------|
-| Lua 脚本 | 低 | EVAL, EVALSHA, SCRIPT LOAD/FLUSH |
+| Lua 脚本 | ✅ | EVAL, EVALSHA, SCRIPT LOAD/EXISTS/FLUSH/KILL/SHOW |
 
 ## 测试验证
 
@@ -371,6 +366,70 @@ redis-cli GEOADD Sicily CH 13.36 38.12 "Palermo"
 # 预期: 返回更新数量
 ```
 
+### Lua 脚本测试
+
+```bash
+# EVAL - 执行 Lua 脚本
+redis-cli -p 6379 EVAL "return 'hello world'" 0
+# 预期: "hello world"
+
+# EVAL 返回数字
+redis-cli -p 6379 EVAL "return 100 + 20" 0
+# 预期: 120
+
+# EVAL 返回数组
+redis-cli -p 6379 EVAL "return {1, 2, 3}" 0
+# 预期: 1, 2, 3
+
+# EVAL 使用 KEYS 和 ARGV
+redis-cli -p 6379 EVAL "return {KEYS[1], ARGV[1], ARGV[2]}" 1 mykey arg1 arg2
+# 预期: mykey, arg1, arg2
+
+# EVAL 使用 redis.call
+redis-cli -p 6379 EVAL "return redis.call('SET', 'lua_key', 'lua_value')" 0
+# 预期: OK
+
+redis-cli -p 6379 EVAL "return redis.call('GET', 'lua_key')" 0
+# 预期: "lua_value"
+
+# EVAL 使用 redis.call INCR
+redis-cli -p 6379 EVAL "return redis.call('INCR', 'counter')" 0
+# 预期: 1
+redis-cli -p 6379 EVAL "return redis.call('INCR', 'counter')" 0
+# 预期: 2
+
+# EVAL 复杂脚本
+redis-cli -p 6379 EVAL "
+local sum = 0
+for i = 1, 10 do
+    sum = sum + i
+end
+return sum
+" 0
+# 预期: 55
+
+# SCRIPT LOAD - 加载脚本并获取 SHA1
+SHA1=$(redis-cli -p 6379 SCRIPT LOAD "return 'loaded script'")
+echo "Script SHA1: $SHA1"
+# 预期: 40字符的 SHA1 哈希值
+
+# EVALSHA - 使用 SHA1 执行已加载的脚本
+redis-cli -p 6379 EVALSHA "$SHA1" 0
+# 预期: "loaded script"
+
+# SCRIPT EXISTS - 检查脚本是否存在
+redis-cli -p 6379 SCRIPT EXISTS "$SHA1" nonexistent_sha1
+# 预期: 1 (存在), 0 (不存在)
+
+# SCRIPT FLUSH - 清空所有脚本缓存
+redis-cli -p 6379 SCRIPT FLUSH
+# 预期: OK. Counted: N
+
+# EVALSHA 在清空后失败
+redis-cli -p 6379 EVALSHA "$SHA1" 0
+# 预期: NOSCRIPT No matching script found
+```
+
 ## 技术栈
 
 - **语言**: Go 1.24+
@@ -385,6 +444,7 @@ redis-cli GEOADD Sicily CH 13.36 38.12 "Palermo"
 - **Bitmap**: String 类型扩展，位操作 (AND/OR/XOR/NOT)
 - **HyperLogLog**: 基数估算算法 (10-bit precision, 1024 registers)
 - **Geo**: 地理位置，Geohash 编码，Haversine 距离计算
+- **Lua 脚本**: gopher-lua 解释器，EVAL/EVALSHA/SCRIPT 命令，redis.call/pcall API
 
 ## 开发笔记
 

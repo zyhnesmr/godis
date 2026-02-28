@@ -74,6 +74,7 @@ const (
 	CatPersistence = "persistence"
 	CatFast        = "fast"
 	CatKeySpace    = "keyspace"
+	CatScript      = "script"
 )
 
 // Reply represents a command reply

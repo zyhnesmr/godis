@@ -21,6 +21,7 @@ import (
 	"github.com/zyhnesmr/godis/internal/expire"
 	"github.com/zyhnesmr/godis/internal/net"
 	"github.com/zyhnesmr/godis/internal/pubsub"
+	"github.com/zyhnesmr/godis/internal/script"
 	aof2 "github.com/zyhnesmr/godis/internal/persistence/aof"
 	rdb2 "github.com/zyhnesmr/godis/internal/persistence/rdb"
 	"github.com/zyhnesmr/godis/pkg/log"
@@ -279,6 +280,11 @@ func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector,
 
 	// Register geo commands
 	commands.RegisterGeoCommands(disp)
+
+	// Initialize script manager and register script commands
+	scriptMgr := script.NewScriptManager()
+	commands.SetScriptManager(scriptMgr)
+	commands.RegisterScriptCommands(disp)
 
 	log.Info("Registered %d commands", len(disp.Commands()))
 
