@@ -271,6 +271,12 @@ func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector,
 	// Register stream commands
 	commands.RegisterStreamCommands(disp)
 
+	// Register bitmap commands
+	commands.RegisterBitmapCommands(disp)
+
+	// Register hyperloglog commands
+	commands.RegisterHyperLogLogCommands(disp)
+
 	log.Info("Registered %d commands", len(disp.Commands()))
 
 	return aofMgr

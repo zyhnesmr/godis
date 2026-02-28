@@ -121,11 +121,13 @@ godis/
 │   │   │   ├── list.go             # 列表命令 (LPUSH, LPOP...)
 │   │   │   ├── set.go              # 集合命令 (SADD, SMEMBERS...)
 │   │   │   ├── zset.go             # 有序集合命令 (ZADD, ZRANGE...)
+│   │   │   ├── bitmap.go           # 位图命令 (SETBIT, GETBIT, BITOP...)
+│   │   │   ├── hyperloglog.go      # HyperLogLog 命令 (PFADD, PFCOUNT...)
 │   │   │   ├── pubsub.go           # 发布订阅命令 (PUBLISH, SUBSCRIBE...)
 │   │   │   ├── stream.go           # 流命令 (XADD, XREAD...)
 │   │   │   ├── transaction.go      # 事务命令 (MULTI, EXEC...)
 │   │   │   ├── server.go           # 服务器命令 (PING, INFO...)
-│   │   │   └── admin.go            # 管理命令 (CONFIG, FLUSHDB...)
+│   │   │   └── persistence.go      # 持久化命令 (SAVE, BGSAVE, BGREWRITEAOF...)
 │   │   │
 │   │   └── reply.go                # 回复构建器
 │   │
@@ -161,16 +163,13 @@ godis/
 │   │   ├── stream/
 │   │   │   ├── stream.go           # 流数据结构
 │   │   │   ├── radix_tree.go       # 基数树索引
-│   │   │   └── consumer_group.go   # 消费者组
-│   │   │
-│   │   ├── bit/
-│   │   │   └── bitmap.go           # 位图操作
+│   │   │   └── consumer.go         # 消费者组
 │   │   │
 │   │   ├── hyperloglog/
-│   │   │   └── hll.go              # HyperLogLog 实现
+│   │   │   └── hll.go              # HyperLogLog 基数估算
 │   │   │
 │   │   └── geo/
-│   │       └── geo.go              # 地理位置实现
+│   │       └── geo.go              # 地理位置实现 (待开发)
 │   │
 │   ├── expire/
 │   │   ├── expire.go               # 过期管理器
@@ -525,8 +524,17 @@ internal/persistence/aof/
   - [x] XADD/XLEN/XRANGE/XREVRANGE/XREAD
   - [x] XGROUP/XREADGROUP/XACK/XCLAIM
   - [x] XDEL/XTRIM/XPENDING/XINFO
-- [ ] Bitmap 位图
-- [ ] HyperLogLog
+- [x] Bitmap 位图
+  - [x] SETBIT/GETBIT 位操作
+  - [x] BITCOUNT 统计设置位
+  - [x] BITPOS 查找位位置
+  - [x] BITOP 位运算 (AND/OR/XOR/NOT)
+  - [x] BITFIELD 位字段操作
+- [x] HyperLogLog 基数估算
+  - [x] PFADD 添加元素
+  - [x] PFCOUNT 估算基数
+  - [x] PFMERGE 合并 HLL
+  - [x] 10-bit precision, 1024 registers
 - [ ] Geo 地理位置
 
 ### 阶段六: 优化与测试 (Week 10)
@@ -755,7 +763,183 @@ StreamID 格式: <millisecondsTimestamp>-<sequenceNumber>
 |------|------|
 | `internal/datastruct/stream/stream.go` | Stream 核心数据结构和操作 |
 | `internal/datastruct/stream/radix_tree.go` | RadixTree 索引实现 |
-| `internal/datastruct/stream/consumer.go` | 消费者组和消费者管理 |
+| `internal/datastruct/stream/consumer.go` | 消费者和消费者组管理 |
 | `internal/command/commands/stream.go` | Stream 命令处理 |
 | `internal/database/object.go` | Stream 对象类型支持 |
+
+---
+
+## 十、Bitmap 实现设计 ✅
+
+### 10.1 Bitmap 数据结构
+
+Bitmap 是基于 String 类型的扩展，将字符串的每一位作为一个独立的布尔值。
+
+```
+Bitmap 结构 (基于 String):
+┌─────────────────────────────────────────────────────────┐
+│  String: "hello" (ASCII: 0x68 0x65 0x6c 0x6c 0x6f)       │
+│                                                          │
+│  Bit 0-7:   0x68 = 01101000  (h)                        │
+│  Bit 8-15:  0x65 = 01100101  (e)                        │
+│  Bit 16-23: 0x6c = 01101100  (l)                        │
+│  Bit 24-31: 0x6c = 01101100  (l)                        │
+│  Bit 32-39: 0x6f = 01101111  (o)                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+**实现要点:**
+1. **位寻址**: `offset = byteIndex * 8 + bitIndex`
+2. **自动扩展**: SETBIT 超出当前长度时自动填充零字节
+3. **高效统计**: BITCOUNT 使用查表法或 Brian Kernighan 算法
+
+### 10.2 Bitmap 核心命令 ✅
+
+| 命令 | 功能 | 状态 |
+|------|------|------|
+| SETBIT | 设置指定位的值 (0/1) | ✅ |
+| GETBIT | 获取指定位的值 | ✅ |
+| BITCOUNT | 统计设置为 1 的位数 | ✅ |
+| BITPOS | 查找第一个指定位的位置 | ✅ |
+| BITOP | 位运算 (AND/OR/XOR/NOT) | ✅ |
+| BITFIELD | 位字段操作 (GET/SET/INCRBY) | ✅ |
+| BITFIELD_RO | 只读位字段操作 | ✅ |
+
+**BITFIELD 编码格式:**
+```
+<encoding>: i<u|s><bits>  # 无符号/有符号整数
+  - u8:  8位无符号 (0-255)
+  - i16: 16位有符号 (-32768~32767)
+  - i32: 32位有符号
+  - i64: 64位有符号
+
+<offset>: #<num> | <offset>
+  - #0: 从位置 0 开始
+  - #1: 从位置 4 开始 (4字节对齐)
+  - 10: 从位置 10 开始
+```
+
+### 10.3 BITOP 操作示例
+
+```
+BITOP AND dest key1 key2
+  ┌─────────┐         ┌─────────┐
+  │  key1   │   AND   │  key2   │
+  │  0xAA   │   ----> │  0x55   │
+  │ 10101010│         │ 01010101│
+  └─────────┘         └─────────┘
+         │                   │
+         └────────┬──────────┘
+                  ▼
+          ┌─────────┐
+          │  dest   │
+          │  0x00   │
+          │ 00000000│
+          └─────────┘
+```
+
+### 10.4 实现文件
+
+| 文件 | 说明 |
+|------|------|
+| `internal/datastruct/string/string.go` | String 类型含位操作方法 (GetBit/SetBit/BitCount/BitOp) |
+| `internal/command/commands/bitmap.go` | Bitmap 命令处理 |
+
+---
+
+## 十一、HyperLogLog 实现设计 ✅
+
+### 11.1 HyperLogLog 算法原理
+
+HyperLogLog 是一种概率数据结构，用于估算集合的基数（不重复元素数量），使用极少内存。
+
+```
+HyperLogLog 结构:
+┌─────────────────────────────────────────────────────────┐
+│  registers [1024]uint8  // 1024个寄存器 (10-bit 精度)   │
+│                                                          │
+│  每个寄存器存储: 该位置对应哈希值的最大前导零数 + 1       │
+│                                                          │
+│  哈希函数: FNV-1a (64-bit)                               │
+│  索引计算: hash >> (64 - 10) = registers[0..1023]       │
+│  前导零: countLeadingZeros(hash << 10) + 1              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**基数估算公式:**
+```
+RAW = α * m² / (Σ 2^(-register[i]))
+
+其中:
+- m = 1024 (寄存器数量)
+- α ≈ 0.673 (修正系数)
+- 当基数较小时使用线性计数
+- 当基数较大时应用大范围修正
+```
+
+**内存占用:**
+```
+1024 registers × 1 byte = 1 KB
+可估算最多约 2^64 个元素的基数
+标准误差率: < 1%
+```
+
+### 11.2 HyperLogLog 核心命令 ✅
+
+| 命令 | 功能 | 状态 |
+|------|------|------|
+| PFADD | 添加元素到 HLL | ✅ |
+| PFCOUNT | 估算基数 | ✅ |
+| PFMERGE | 合并多个 HLL | ✅ |
+
+### 11.3 HyperLogLog 操作流程
+
+```
+PFADD hll element
+│
+├── 1. 计算 hash = FNV1a(element) % 2^64
+│
+├── 2. 获取索引: index = hash >> (64 - 10)
+│
+├── 3. 计算前导零: ρ = countLeadingZeros(hash << 10) + 1
+│
+├── 4. 更新寄存器: registers[index] = max(registers[index], ρ)
+│
+└── 5. 返回是否修改 (1=新元素, 0=已存在)
+
+PFCOUNT hll
+│
+├── 1. 读取所有 1024 个寄存器值
+│
+├── 2. 计算 sum = Σ 2^(-register[i])
+│
+├── 3. 应用修正公式得到估算值
+│
+└── 4. 返回基数 (int64)
+
+PFMERGE dest hll1 hll2 ...
+│
+├── 对每个索引 i:
+│   │
+│   └── dest.registers[i] = max(hll1.registers[i], hll2.registers[i], ...)
+│
+└── 返回 OK
+```
+
+### 11.4 实现文件
+
+| 文件 | 说明 |
+|------|------|
+| `internal/datastruct/hyperloglog/hll.go` | HyperLogLog 核心算法实现 |
+| `internal/command/commands/hyperloglog.go` | HyperLogLog 命令处理 |
+
+### 11.5 精度与误差
+
+| 元素数量 | 实际基数 | 估算基数 | 误差率 |
+|----------|----------|----------|--------|
+| 100 | 100 | ~100 | < 1% |
+| 1,000 | 1,000 | ~1,000 | < 1% |
+| 10,000 | 10,000 | ~10,000 | < 1% |
+| 100,000 | 100,000 | ~99,500 | < 1% |
+| 1,000,000 | 1,000,000 | ~1,002,000 | < 1% |
 

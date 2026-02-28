@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-### ✅ 已完成模块 (20/24 核心任务)
+### ✅ 已完成模块 (22/24 核心任务)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -30,12 +30,13 @@
 | 事务支持 | ✅ | MULTI, EXEC, DISCARD, WATCH, UNWATCH |
 | RDB 持久化 | ✅ | SAVE, BGSAVE, LASTSAVE, 启动自动加载, CRC64 校验 |
 | AOF 持久化 | ✅ | APPENDONLY, BGREWRITEAOF, AOF 重写, Fsync 策略 |
+| Bitmap 数据结构 | ✅ | SETBIT, GETBIT, BITCOUNT, BITPOS, BITOP, BITFIELD, BITFIELD_RO |
+| HyperLogLog 数据结构 | ✅ | PFADD, PFCOUNT, PFMERGE |
 
 ### ⏳ 待开发模块
 
 | 模块 | 优先级 | 涉及命令 |
 |------|--------|----------|
-| Bitmap/HyperLogLog | 低 | SETBIT, GETBIT, BITCOUNT, PFADD... |
 | 地理位置 | 低 | GEOADD, GEORADIUS, GEOHASH... |
 | Lua 脚本 | 低 | EVAL, EVALSHA, SCRIPT LOAD/FLUSH |
 
@@ -262,6 +263,74 @@ redis-cli APPENDONLY no
 # 预期: OK
 ```
 
+### Bitmap 数据结构测试
+
+```bash
+# SETBIT - 设置位值
+redis-cli SETBIT mybits 0 1
+redis-cli SETBIT mybits 10 1
+redis-cli SETBIT mybits 20 1
+
+# GETBIT - 获取位值
+redis-cli GETBIT mybits 0     # 预期: 1
+redis-cli GETBIT mybits 1     # 预期: 0
+redis-cli GETBIT mybits 10    # 预期: 1
+
+# BITCOUNT - 统计设置为 1 的位数
+redis-cli BITCOUNT mybits     # 预期: 3
+
+# BITPOS - 查找指定位的位置
+redis-cli BITPOS mybits 1     # 预期: 0 (第一个值为 1 的位)
+redis-cli BITPOS mybits 0     # 预期: 1 (第一个值为 0 的位)
+
+# BITOP - 位操作
+redis-cli SET bits1 "\xAA"
+redis-cli SET bits2 "\x55"
+redis-cli BITOP AND dest bits1 bits2
+redis-cli BITOP OR dest bits1 bits2
+redis-cli BITOP XOR dest bits1 bits2
+redis-cli BITOP NOT dest bits1
+
+# BITFIELD - 位字段操作
+redis-cli BITFIELD mykey SET u8 0 100 GET u8 0
+redis-cli BITFIELD mykey INCRBY u8 0 1
+```
+
+### HyperLogLog 数据结构测试
+
+```bash
+# PFADD - 添加元素
+redis-cli PFADD hll a b c d e f
+# 预期: 1 (首次添加)
+
+redis-cli PFADD hll e f g h i j
+# 预期: 0 或 1 (取决于是否有新元素)
+
+# PFCOUNT - 估算基数
+redis-cli PFCOUNT hll
+# 预期: 估算的不重复元素数量
+
+# PFMERGE - 合并多个 HyperLogLog
+redis-cli PFADD hll2 x y z
+redis-cli PFMERGE hll3 hll hll2
+# 预期: OK
+
+redis-cli PFCOUNT hll3
+# 预期: 合并后的估算基数
+
+# 多键 PFCOUNT
+redis-cli PFCOUNT hll hll2
+# 预期: 合并临时计算的估算基数
+
+# 大数据集测试
+redis-cli DEL bigset
+for i in {1..1000}; do
+    redis-cli PFADD bigset "element$i"
+done
+redis-cli PFCOUNT bigset
+# 预期: 接近 1000 的估算值
+```
+
 ## 技术栈
 
 - **语言**: Go 1.24+
@@ -273,6 +342,8 @@ redis-cli APPENDONLY no
 - **淘汰**: 近似LRU/LFU + EvictionPool (256 buckets)
 - **事务**: MULTI/EXEC + WATCH 乐观锁 + dirty key 追踪
 - **持久化**: RDB 快照 + AOF 日志 (Redis 格式兼容, CRC64 校验)
+- **Bitmap**: String 类型扩展，位操作 (AND/OR/XOR/NOT)
+- **HyperLogLog**: 基数估算算法 (10-bit precision, 1024 registers)
 
 ## 开发笔记
 
@@ -311,9 +382,18 @@ make clean      # 清理
 8. **事务支持** - MULTI, EXEC, DISCARD, WATCH ✅
 9. **RDB 持久化** - 快照保存，RDB 格式编码/解码 ✅
 10. **AOF 持久化** - 追加日志，AOF 重写 ✅
+11. **Bitmap** - 位操作，SETBIT/GETBIT/BITOP/BITFIELD ✅
+12. **HyperLogLog** - 基数估算，PFADD/PFCOUNT/PFMERGE ✅
 
 ## 已修复 Bug
 
 | Bug | 描述 | 修复时间 |
 |-----|------|----------|
 | ZADD 超时 | 参数解析循环中 `break` 只跳出 `switch` 而非 `for` 循环 | 2026-02-27 |
+
+## 新增功能记录
+
+| 功能 | 描述 | 完成时间 |
+|------|------|----------|
+| Bitmap 模块 | SETBIT/GETBIT/BITCOUNT/BITPOS/BITOP/BITFIELD/BITFIELD_RO | 2026-02-28 |
+| HyperLogLog 模块 | PFADD/PFCOUNT/PFMERGE 基数估算 (10-bit precision) | 2026-02-28 |
