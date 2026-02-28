@@ -5,8 +5,6 @@
 package hyperloglog
 
 import (
-	"encoding/binary"
-	"hash/fnv"
 	"math"
 )
 
@@ -93,11 +91,26 @@ func (hll *HyperLogLog) Count() int64 {
 		}
 	}
 
-	// Calculate alpha based on precision
-	alpha := 0.673 * (1.0 + 0.715/float64(numRegisters))
-
 	// Raw estimate
 	m := float64(numRegisters)
+
+	// Alpha is a constant for bias correction
+	// For different m values:
+	// m = 16: alpha = 0.673
+	// m = 32: alpha = 0.697
+	// m = 64: alpha = 0.709
+	// m >= 128: alpha = 0.7213/(1 + 1.079/m)
+	var alpha float64
+	if m == 16 {
+		alpha = 0.673
+	} else if m == 32 {
+		alpha = 0.697
+	} else if m == 64 {
+		alpha = 0.709
+	} else {
+		alpha = 0.7213 / (1.0 + 1.079/m)
+	}
+
 	estimation := alpha * m * m / (m - sum)
 
 	// Apply correction for small cardinalities
@@ -141,18 +154,9 @@ func (hll *HyperLogLog) Bytes() []byte {
 	return result
 }
 
-// hash64 computes a 64-bit hash using FNV-1a
+// hash64 computes a 64-bit hash using MurmurHash3
 func hash64(item string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(item))
-	sum := h.Sum(nil)
-	// Ensure we have at least 8 bytes
-	if len(sum) < 8 {
-		padded := make([]byte, 8)
-		copy(padded, sum)
-		sum = padded
-	}
-	return binary.BigEndian.Uint64(sum)
+	return murmur64([]byte(item))
 }
 
 // countLeadingZeros counts the number of leading zeros in a 64-bit integer
@@ -186,4 +190,63 @@ func (hll *HyperLogLog) Clone() *HyperLogLog {
 	}
 	copy(clone.registers, hll.registers)
 	return clone
+}
+
+// murmur64 is a 64-bit MurmurHash2 implementation for better hash distribution
+func murmur64(data []byte) uint64 {
+	const (
+		m = uint64(0xc6a4a7935bd1e995)
+		r = 47
+	)
+
+	var h uint64 = ^uint64(0) // seed
+
+	length := len(data)
+	nblocks := length / 8
+
+	for i := 0; i < nblocks; i++ {
+		k := uint64(data[i*8]) | uint64(data[i*8+1])<<8 |
+			uint64(data[i*8+2])<<16 | uint64(data[i*8+3])<<24 |
+			uint64(data[i*8+4])<<32 | uint64(data[i*8+5])<<40 |
+			uint64(data[i*8+6])<<48 | uint64(data[i*8+7])<<56
+
+		k *= m
+		k ^= k >> r
+		k *= m
+
+		h ^= k
+		h *= m
+	}
+
+	tail := data[nblocks*8:]
+
+	switch len(tail) {
+	case 7:
+		h ^= uint64(tail[6]) << 48
+		fallthrough
+	case 6:
+		h ^= uint64(tail[5]) << 40
+		fallthrough
+	case 5:
+		h ^= uint64(tail[4]) << 32
+		fallthrough
+	case 4:
+		h ^= uint64(tail[3]) << 24
+		fallthrough
+	case 3:
+		h ^= uint64(tail[2]) << 16
+		fallthrough
+	case 2:
+		h ^= uint64(tail[1]) << 8
+		fallthrough
+	case 1:
+		h ^= uint64(tail[0])
+		h *= m
+	}
+
+	h ^= h >> r
+	h *= m
+	h ^= h >> r
+
+	return h
 }

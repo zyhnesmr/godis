@@ -407,12 +407,13 @@ func (d *Dict) rehash(steps int) {
 		}
 
 		// Find next non-empty slot in table 0
-		for d.ht[0].table[d.rehashIdx] == nil {
+		for uint64(d.rehashIdx) < d.ht[0].size && d.ht[0].table[d.rehashIdx] == nil {
 			d.rehashIdx++
-			if uint64(d.rehashIdx) >= d.ht[0].size {
-				// Shouldn't happen if used > 0
-				return
-			}
+		}
+		// Check if we've gone past the end
+		if uint64(d.rehashIdx) >= d.ht[0].size {
+			// Shouldn't happen if used > 0, but return safely
+			return
 		}
 
 		// Move all entries from this slot

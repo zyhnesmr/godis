@@ -1,12 +1,25 @@
-# Godis - Go语言实现的Redis内存数据库
+# Godis 架构设计文档
 
-## 项目概述
+> Go 语言实现的 Redis 兼容内存数据库
 
-Godis 是一个使用 Go 语言实现的 Redis 兼容内存数据库，支持完整的 Redis 通讯协议 (RESP) 和核心功能。
+## 一、项目概述
 
-## 一、系统架构设计
+Godis 是一个使用 Go 语言实现的 Redis 兼容内存数据库，支持完整的 Redis 通讯协议 (RESP2) 和核心功能。
 
-### 1.1 整体架构图
+### 核心特性
+
+- **协议兼容**: 完整支持 RESP2 协议
+- **数据结构**: String, Hash, List, Set, ZSet, Stream, Bitmap, HyperLogLog, Geo
+- **持久化**: RDB 快照 + AOF 日志双持久化
+- **高可用**: 事务支持、发布订阅、过期淘汰策略
+- **脚本支持**: Lua 脚本 (EVAL/EVALSHA/SCRIPT)
+- **并发控制**: sync.RWMutex + per-connection goroutine
+
+---
+
+## 二、系统架构
+
+### 2.1 整体架构图
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -25,8 +38,8 @@ Godis 是一个使用 Go 语言实现的 Redis 兼容内存数据库，支持完
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                       Command Processing Layer                       │    │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │    │
-│  │  │   Command    │  │    Command   │  │    Command   │              │    │
-│  │  │  Dispatcher  │──│   Executor   │──│    Queue     │              │    │
+│  │  │   Command    │  │    Command   │  │    Lua       │              │    │
+│  │  │  Dispatcher  │──│   Executor   │──│  Script      │              │    │
 │  │  └──────────────┘  └──────────────┘  └──────────────┘              │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                      │                                        │
@@ -35,57 +48,42 @@ Godis 是一个使用 Go 语言实现的 Redis 兼容内存数据库，支持完
 │  │                          Data Structure Layer                        │    │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │    │
 │  │  │ String  │  │   Hash  │  │   List  │  │   Set   │  │ ZSet    │   │    │
-│  │  │   DB    │  │   DB    │  │   DB    │  │   DB    │  │   DB    │   │    │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │    │
-│  │                                                                       │    │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐                   │    │
-│  │  │  Stream │  │   Bit   │  │  Hyper  │  │  Geo    │                   │    │
-│  │  │   DB    │  │   DB    │  │LogLog   │  │   DB    │                   │    │
+│  │  │ Stream  │  │  Bit    │  │  Hyper  │  │  Geo    │                   │    │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘                   │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                      │                                        │
 │                                      ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                        Storage Engine Layer                          │    │
+│  │                     Storage & Features Layer                         │    │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │    │
-│  │  │   Memory     │  │  Eviction    │  │  Expire      │              │    │
-│  │  │  Manager     │  │  Policy      │  │  Manager     │              │    │
+│  │  │   Memory     │  │  Expire      │  │  Eviction    │              │    │
+│  │  │  Manager     │  │  Manager     │  │  Policy      │              │    │
+│  │  ├──────────────┤  ├──────────────┤  ├──────────────┤              │    │
+│  │  │ Transaction  │  │  Pub/Sub     │  │  Persistence │              │    │
+│  │  │   (MULTI)    │  │  Manager     │  │  RDB/AOF     │              │    │
 │  │  └──────────────┘  └──────────────┘  └──────────────┘              │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                       Persistence Layer                              │    │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │    │
-│  │  │    RDB       │  │    AOF       │  │  AOF Rewrite  │              │    │
-│  │  │   (Snapshot) │  │   (Log)      │  │    (Merge)    │              │    │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘              │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                       Transaction Layer                              │    │
-│  │  ┌──────────────┐  ┌──────────────┐                                  │    │
-│  │  │    MULTI     │  │     WATCH    │                                  │    │
-│  │  │    EXEC      │  │    UNWATCH   │                                  │    │
-│  │  └──────────────┘  └──────────────┘                                  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 核心模块说明
+### 2.2 核心模块说明
 
 | 模块 | 职责 |
 |------|------|
 | **Networking** | TCP 连接管理、RESP 协议编解码 |
-| **Command** | 命令分发、执行、路由 |
-| **Data Structure** | 6 种数据结构实现 |
+| **Command** | 命令分发、执行、路由、Lua 脚本 |
+| **Data Structure** | 9 种数据结构实现 |
 | **Storage** | 内存管理、过期策略、淘汰算法 |
 | **Persistence** | RDB 快照、AOF 日志 |
 | **Transaction** | 事务支持、乐观锁 |
+| **Pub/Sub** | 发布订阅、模式匹配 |
 
 ---
 
-## 二、目录结构设计
+## 三、目录结构
 
 ```
 godis/
@@ -112,65 +110,52 @@ godis/
 │   ├── command/
 │   │   ├── command.go              # 命令接口定义
 │   │   ├── dispatcher.go           # 命令分发器
-│   │   ├── executor.go             # 命令执行器
+│   │   ├── reply.go                # 回复构建器
 │   │   │
-│   │   ├── commands/
-│   │   │   ├── key.go              # 键管理命令 (DEL, EXISTS, EXPIRE...)
-│   │   │   ├── string.go           # 字符串命令 (SET, GET, MSET...)
-│   │   │   ├── hash.go             # 哈希命令 (HSET, HGET...)
-│   │   │   ├── list.go             # 列表命令 (LPUSH, LPOP...)
-│   │   │   ├── set.go              # 集合命令 (SADD, SMEMBERS...)
-│   │   │   ├── zset.go             # 有序集合命令 (ZADD, ZRANGE...)
-│   │   │   ├── bitmap.go           # 位图命令 (SETBIT, GETBIT, BITOP...)
-│   │   │   ├── hyperloglog.go      # HyperLogLog 命令 (PFADD, PFCOUNT...)
-│   │   │   ├── geo.go              # 地理位置命令 (GEOADD, GEODIST...)
-│   │   │   ├── pubsub.go           # 发布订阅命令 (PUBLISH, SUBSCRIBE...)
-│   │   │   ├── stream.go           # 流命令 (XADD, XREAD...)
-│   │   │   ├── transaction.go      # 事务命令 (MULTI, EXEC...)
-│   │   │   ├── server.go           # 服务器命令 (PING, INFO...)
-│   │   │   └── persistence.go      # 持久化命令 (SAVE, BGSAVE, BGREWRITEAOF...)
-│   │   │
-│   │   └── reply.go                # 回复构建器
+│   │   └── commands/               # 命令实现
+│   │       ├── key.go              # 键管理 (DEL, EXISTS, EXPIRE...)
+│   │       ├── string.go           # 字符串 (SET, GET, MSET...)
+│   │       ├── hash.go             # 哈希 (HSET, HGET...)
+│   │       ├── list.go             # 列表 (LPUSH, LPOP...)
+│   │       ├── set.go              # 集合 (SADD, SMEMBERS...)
+│   │       ├── zset.go             # 有序集合 (ZADD, ZRANGE...)
+│   │       ├── bitmap.go           # 位图 (SETBIT, GETBIT, BITOP...)
+│   │       ├── hyperloglog.go      # HyperLogLog (PFADD, PFCOUNT...)
+│   │       ├── geo.go              # 地理位置 (GEOADD, GEODIST...)
+│   │       ├── stream.go           # 流 (XADD, XREAD...)
+│   │       ├── pubsub.go           # 发布订阅 (PUBLISH, SUBSCRIBE...)
+│   │       ├── transaction.go      # 事务 (MULTI, EXEC...)
+│   │       ├── script.go           # Lua 脚本 (EVAL, EVALSHA...)
+│   │       ├── server.go           # 服务器 (PING, INFO...)
+│   │       └── persistence.go      # 持久化 (SAVE, BGSAVE, BGREWRITEAOF...)
 │   │
 │   ├── database/
 │   │   ├── db.go                   # 数据库核心
-│   │   ├── dict.go                 # 字典实现
+│   │   ├── dict.go                 # 字典实现 (渐进式 rehash)
 │   │   ├── object.go               # 数据对象封装
 │   │   └── selector.go             # 数据库选择器
 │   │
-│   ├── datastruct/
+│   ├── datastruct/                 # 数据结构实现
 │   │   ├── string/
-│   │   │   ├── string.go           # 字符串实现
-│   │   │   └── encoding.go         # 编码方式 (int, embstr, raw)
-│   │   │
+│   │   │   ├── string.go           # 字符串实现 (含位操作)
+│   │   │   └── encoding.go         # 编码方式 (int/embstr/raw)
 │   │   ├── hash/
-│   │   │   ├── hash.go             # 哈希表实现
-│   │   │   └── ziplist.go          # 压缩列表优化
-│   │   │
+│   │   │   └── hash.go             # 哈希表实现
 │   │   ├── list/
-│   │   │   ├── list.go             # 列表实现
-│   │   │   ├── quicklist.go        # 快速列表
-│   │   │   └── linkedlist.go       # 双向链表
-│   │   │
+│   │   │   └── list.go             # 双向链表实现
 │   │   ├── set/
-│   │   │   ├── set.go              # 集合实现
-│   │   │   └── intset.go           # 整数集合优化
-│   │   │
+│   │   │   └── set.go              # 集合实现
 │   │   ├── zset/
 │   │   │   ├── zset.go             # 有序集合实现
-│   │   │   ├── skiplist.go         # 跳表实现
-│   │   │   └── dict+zset.go        # 哈希+跳表组合
-│   │   │
+│   │   │   └── skiplist.go         # 跳表实现
 │   │   ├── stream/
 │   │   │   ├── stream.go           # 流数据结构
 │   │   │   ├── radix_tree.go       # 基数树索引
 │   │   │   └── consumer.go         # 消费者组
-│   │   │
 │   │   ├── hyperloglog/
-│   │   │   └── hll.go              # HyperLogLog 基数估算
-│   │   │
+│   │   │   └── hll.go              # HyperLogLog (MurmurHash2)
 │   │   └── geo/
-│   │       └── geohash.go          # 地理位置 Geohash 编码/距离计算
+│   │       └── geohash.go          # Geohash 编码/距离计算
 │   │
 │   ├── expire/
 │   │   ├── expire.go               # 过期管理器
@@ -178,7 +163,7 @@ godis/
 │   │   └── scheduler.go            # 过期调度器
 │   │
 │   ├── eviction/
-│   │   ├── policy.go               # 淘汰策略接口和实现
+│   │   ├── policy.go               # 淘汰策略 (LRU/LFU/TTL/Random)
 │   │   └── manager.go              # 淘汰管理器
 │   │
 │   ├── persistence/
@@ -186,42 +171,33 @@ godis/
 │   │   │   ├── rdb.go              # RDB 格式
 │   │   │   ├── encoder.go          # RDB 编码器
 │   │   │   └── decoder.go          # RDB 解码器
-│   │   │
 │   │   ├── aof/
 │   │   │   ├── aof.go              # AOF 实现
 │   │   │   ├── rewrite.go          # AOF 重写
-│   │   │   └── fsync.go            # 持久化策略
-│   │   │
+│   │   │   └── fsync.go            # Fsync 策略
 │   │   └── loader.go               # 数据加载器
 │   │
 │   ├── pubsub/
-│   │   └── manager.go              # 发布订阅管理器 (频道、模式订阅)
+│   │   └── manager.go              # 发布订阅管理器
 │   │
 │   ├── transaction/
-│   │   ├── manager.go              # 事务管理器 (队列、WATCH)
-│   │   └── commands/               # 事务命令实现
-│   │       └── transaction.go      # MULTI, EXEC, DISCARD, WATCH, UNWATCH
+│   │   └── manager.go              # 事务管理器 (MULTI/EXEC/WATCH)
 │   │
-│   ├── replication/
-│   │   └── replication.go          # 主从复制 (可选)
-│   │
-│   └── cluster/
-│       └── cluster.go              # 集群支持 (预留)
+│   └── script/
+│       └── manager.go              # Lua 脚本管理器
 │
 ├── pkg/
 │   ├── utils/
 │   │   ├── bytes.go                # 字节工具
-│   │   ├── math.go                 # 数学工具
-│   │   └── time.go                 # 时间工具
-│   │
+│   │   └── math.go                 # 数学工具
 │   └── log/
 │       └── logger.go               # 日志模块
 │
 ├── config/
 │   └── godis.conf                  # 配置文件
 │
-├── scripts/
-│   └── build.sh                    # 构建脚本
+├── docs/
+│   └── ARCHITECTURE.md             # 架构文档
 │
 ├── Dockerfile
 ├── go.mod
@@ -232,83 +208,84 @@ godis/
 
 ---
 
-## 三、核心功能实现规划
+## 四、数据结构
 
-### 3.1 RESP 协议实现
+### 4.1 String (字符串)
 
-**RESP (REdis Serialization Protocol)** 支持以下数据类型：
-
-| 类型 | 标识 | 说明 |
-|------|------|------|
-| Simple Strings | `+` | 简单字符串，如 `+OK\r\n` |
-| Errors | `-` | 错误信息，如 `-Error message\r\n` |
-| Integers | `:` | 整数，如 `:1000\r\n` |
-| Bulk Strings | `$` | 二进制安全字符串 |
-| Arrays | `*` | 数组，命令请求和批量回复 |
-
-### 3.2 数据结构实现
-
-#### 3.2.1 String (字符串)
-
-```
-编码方式：
-├── int                    # 整数 (≤ long, 8字节)
-├── embstr                # 嵌入式字符串 (≤ 44字节)
-└── raw                   # 原始字符串 (> 44字节)
-```
+**编码方式**:
+- `int`: 整数 (≤ long, 8字节)
+- `embstr`: 嵌入式字符串 (≤ 44字节)
+- `raw`: 原始字符串 (> 44字节)
 
 **核心命令**: SET, GET, MSET, MGET, INCR, DECR, APPEND, GETRANGE, SETRANGE, STRLEN
 
-#### 3.2.2 Hash (哈希)
+### 4.2 Hash (哈希)
 
-```
-编码方式：
-├── ziplist               # 压缩列表 (entry < 512 且 value < 64字节)
-└── hashtable             # 哈希表
-```
+**核心命令**: HSET, HGET, HMGET, HDEL, HEXISTS, HINCRBY, HKEYS, HVALS, HLEN, HGETALL
 
-**核心命令**: HSET, HGET, HMSET, HMGET, HGETALL, HDEL, HEXISTS, HINCRBY, HKEYS, HVALS, HLEN
+### 4.3 List (列表)
 
-#### 3.2.3 List (列表)
+**核心命令**: LPUSH, RPUSH, LPOP, RPOP, LRANGE, LINDEX, LSET, LLEN, LINSERT, LTRIM, LREM
 
-```
-编码方式：
-├── quicklist             # 快速列表 (ziplist + linkedlist)
-└── linkedlist            # 双向链表 (旧版)
-```
+### 4.4 Set (集合)
 
-**核心命令**: LPUSH, RPUSH, LPOP, RPOP, LRANGE, LINDEX, LSET, LLEN, LINSERT, LTRIM
+**核心命令**: SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SPOP, SRANDMEMBER, SMOVE, SINTER, SUNION, SDIFF, SINTERSTORE, SUNIONSTORE, SDIFFSTORE, SSCAN, SMISMEMBER
 
-#### 3.2.4 Set (集合)
+### 4.5 ZSet (有序集合)
 
-```
-编码方式：
-├── intset                # 整数集合 (全为整数且 < 512个)
-└── hashtable             # 哈希表
-```
+**数据结构**: 跳表 (SkipList) + 哈希表
 
-**核心命令**: SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SPOP, SRANDMEMBER, SINTER, SUNION, SDIFF
+**核心命令**: ZADD, ZREM, ZSCORE, ZINCRBY, ZCARD, ZCOUNT, ZRANGE, ZREVRANGE, ZRANK, ZREVRANK, ZPOPMAX, ZPOPMIN, ZRANGEBYSCORE, ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZUNION, ZINTER, ZUNIONSTORE, ZINTERSTORE, ZDIFF, ZDIFFSTORE, ZSCAN, ZRANDMEMBER, ZMSCORE
 
-#### 3.2.5 ZSet (有序集合)
+### 4.6 Stream (流)
 
-```
-编码方式：
-├── ziplist               # 压缩列表 (entry < 128 且 value < 64字节)
-└── skiplist + hashtable  # 跳表 + 哈希表组合
-```
+**数据结构**: 数组存储 + RadixTree 索引 + 消费者组管理
 
-**核心命令**: ZADD, ZREM, ZRANGE, ZREVRANGE, ZRANK, ZSCORE, ZINCRBY, ZCOUNT, ZCARD
+**核心命令**: XADD, XLEN, XRANGE, XREVRANGE, XREAD, XDEL, XTRIM, XGROUP, XREADGROUP, XACK, XCLAIM, XPENDING, XINFO
 
-### 3.3 过期与淘汰机制
+**StreamID 格式**: `<millisecondsTimestamp>-<sequenceNumber>`
 
-#### 过期策略
+### 4.7 Bitmap (位图)
 
-1. **被动过期**: 访问时检查过期
-2. **主动过期**: 定时扫描删除过期键
-   - 每 10ms 随机抽查 20 个键
-   - 如果过期键比例 > 25%，加速扫描
+基于 String 类型扩展，将字符串每一位作为布尔值。
 
-#### 淘汰策略
+**核心命令**: SETBIT, GETBIT, BITCOUNT, BITPOS, BITOP, BITFIELD, BITFIELD_RO
+
+**BITOP 操作**: AND, OR, XOR, NOT
+
+### 4.8 HyperLogLog (基数估算)
+
+**算法**: 10-bit precision, 1024 registers, MurmurHash2 哈希
+
+**核心命令**: PFADD, PFCOUNT, PFMERGE
+
+**内存占用**: 1 KB (1024 registers × 1 byte)
+
+**误差率**: < 1%
+
+### 4.9 Geo (地理位置)
+
+**实现**: 基于 ZSet，52-bit Geohash 编码
+
+**核心命令**: GEOADD, GEODIST, GEOHASH, GEOPOS, GEORADIUS, GEORADIUSBYMEMBER
+
+**距离计算**: Haversine 公式 (地球半径 6372797.5608 米)
+
+---
+
+## 五、高级功能
+
+### 5.1 过期机制
+
+**过期策略**:
+- **被动过期**: 访问时检查过期
+- **主动过期**: 定时扫描删除过期键
+  - 每 10ms 随机抽查 20 个键
+  - 如果过期键比例 > 25%，加速扫描
+
+**核心命令**: EXPIRE, EXPIREAT, TTL, PTTL, PERSIST, SETEX, PSETEX
+
+### 5.2 淘汰策略
 
 | 策略 | 说明 |
 |------|------|
@@ -321,242 +298,187 @@ godis/
 | volatile-random | 随机淘汰设置了过期时间的键 |
 | volatile-ttl | 淘汰即将过期的键 |
 
-**淘汰算法实现**:
+**LRU 实现**: 近似 LRU，256 个 bucket 的 EvictionPool
 
+**LFU 实现**: 对数计数器，定期衰减
+
+### 5.3 事务机制
+
+**事务流程**:
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Eviction Manager                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Policy     │  │ Eviction     │  │   Memory     │     │
-│  │   Engine     │──│    Pool      │──│   Monitor    │     │
-│  │              │  │  (256        │  │              │     │
-│  │  LRU/LFU/    │  │   buckets)   │  │  Usage Calc  │     │
-│  │  TTL/Random  │  │              │  │              │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
+MULTI → 命令入队 (QUEUED) → EXEC/DISCARD
 ```
 
-**LRU 实现**:
-- 近似 LRU 算法，使用 EvictionPool 维护候选键
-- 256 个 bucket，按 idle 时间分类
-- 每个 bucket 最多 16 个候选键
-- 采样配置: `maxmemory-samples` (默认 5)
+**WATCH 机制** (乐观锁):
+- 监控 key 在事务执行期间是否被修改
+- 通过 dirty key 回调机制实现
+- CAS (Check-And-Set) 语义
 
-**LFU 实现**:
-- 使用对象 LRU 字段存储 LFU 数据
-- 高 16 位: 时间 (分钟)
-- 低 8 位: 访问计数器
-- 对数计数器，定期衰减
+**核心命令**: MULTI, EXEC, DISCARD, WATCH, UNWATCH
 
-### 3.4 持久化机制
+### 5.4 发布订阅
 
-#### RDB (快照持久化)
+**订阅类型**:
+- **频道订阅**: SUBSCRIBE/UNSUBSCRIBE
+- **模式订阅**: PSUBSCRIBE/PUNSUBSCRIBE (支持 Glob 通配符)
 
+**消息格式**:
+- 频道订阅: `["message", "channel", "payload"]`
+- 模式订阅: `["pmessage", "pattern", "channel", "payload"]`
+
+**核心命令**: PUBLISH, SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, PUBSUB
+
+### 5.5 Lua 脚本
+
+**解释器**: gopher-lua
+
+**核心命令**:
+| 命令 | 说明 |
+|------|------|
+| EVAL | 执行 Lua 脚本 |
+| EVALSHA | 执行已缓存的脚本 (通过 SHA1) |
+| SCRIPT LOAD | 加载脚本并返回 SHA1 |
+| SCRIPT EXISTS | 检查脚本是否存在 |
+| SCRIPT FLUSH | 清空脚本缓存 |
+| SCRIPT KILL | 终止脚本执行 |
+| SCRIPT SHOW | 显示脚本内容 |
+
+**Lua API**:
+```lua
+redis.call(command, ...)    -- 执行 Redis 命令
+redis.pcall(command, ...)   -- 安全执行
+
+-- 全局变量
+KEYS    -- Redis key 数组
+ARGV    -- 参数数组
 ```
-保存时机:
-├── save 900 1           # 900秒内至少1个key变化
-├── save 300 10          # 300秒内至少10个key变化
-├── save 60 10000        # 60秒内至少10000个key变化
-└── 手动触发: SAVE, BGSAVE
-```
+
+**返回值转换**:
+| Lua 类型 | Redis 返回值 |
+|----------|-------------|
+| number | Integer |
+| string | Bulk String |
+| boolean | Integer (1=true, 0=false) |
+| table | Array |
+| nil | Nil |
+
+---
+
+## 六、持久化机制
+
+### 6.1 RDB (快照持久化)
+
+**保存时机**:
+- 配置规则: `save 900 1`, `save 300 10`, `save 60 10000`
+- 手动触发: SAVE, BGSAVE
 
 **RDB 文件格式**:
-- 使用 LZF 压缩
+- Magic: "REDIS"
+- Version: 9 (4 bytes, big endian)
+- Opcode: SELECTDB, RESIZEDB, EXPIREMS, EOF
+- Value Types: String, List, Hash, Set, ZSet, ZSet2
 - CRC64 校验和
-- 支持增量保存
 
-#### AOF (追加日志)
+**实现文件**: `internal/persistence/rdb/`
 
-```
-追加策略:
-├── always               # 每个写命令都同步
-├── everysec             # 每秒同步一次 (默认)
-└── no                   # 由操作系统决定
-```
+### 6.2 AOF (追加日志)
+
+**追加策略**:
+| 策略 | 说明 |
+|------|------|
+| always | 每个写命令都同步 |
+| everysec | 每秒同步一次 (默认) |
+| no | 由操作系统决定 |
 
 **AOF 文件格式**:
 - RESP 格式存储每个写命令
-- 支持 SELECT 命令切换数据库
 - 启动时自动重放命令恢复数据
 
 **AOF 重写**:
 - 当 AOF 文件大小超过指定比例时触发
 - 遍历数据库生成最小命令集
-- 压缩多条命令为单条（如 LPUSH 多个元素 → 一条命令）
 - 后台进程执行，不阻塞主服务
 
-**实现文件**:
-```
-internal/persistence/aof/
-├── aof.go              # AOF 核心功能
-│   ├── Enable()         # 启用 AOF
-│   ├── Disable()        # 禁用 AOF
-│   ├── LogCommand()     # 记录命令到 AOF
-│   ├── Load()           # 启动时加载 AOF
-│   └── fsyncLoop()      # Fsync 后台循环
-├── rewrite.go          # AOF 重写
-│   ├── Rewrite()        # 同步重写
-│   ├── RewriteInBackground() # 异步重写
-│   └── rewriteKey()     # 重写单个键
-└── command.go          # AOF 命令
-    ├── APPENDONLY       # 启用/禁用 AOF
-    └── BGREWRITEAOF    # 后台重写
-```
+**核心命令**: APPENDONLY, BGREWRITEAOF
 
-**核心特性**:
-- 命令过滤：只记录写命令，忽略读命令
-- 自动恢复：启动时检测 AOF 文件并优先加载
-- 增量记录：每个写命令后立即追加到文件
-- 缓冲写入：32KB 写缓冲区，定时刷新
-
-### 3.5 事务机制
-
-```
-事务流程:
-├── MULTI                # 标记事务开始，设置 FlagMulti
-├── ...命令入队...       # 命令进入队列，返回 QUEUED
-├── EXEC                 # 执行事务中所有命令
-├── DISCARD              # 取消事务，清空队列
-└── WATCH/UNWATCH        # 乐观锁机制
-```
-
-**事务状态管理**:
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Transaction Manager                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Command    │  │   Watched    │  │   Dirty      │     │
-│  │    Queue     │  │    Keys      │  │    Keys      │     │
-│  │  (Conn→Cmd)  │  │ (Conn→Keys)  │  │  (Key→bool)  │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**WATCH 机制 (乐观锁)**:
-- 监控 key 在事务执行期间是否被修改
-- 通过 dirty key 回调机制实现
-- DB 写操作时标记 dirty keys
-- EXEC 前检查 watched keys 是否 dirty
-- CAS (Check-And-Set) 语义
-
-**实现细节**:
-- `Conn.SetInMulti()`: 设置事务状态
-- `Conn.IsInMulti()`: 检查是否在事务中
-- `Dispatcher`: MULTI 状态下命令排队而非执行
-- `DB.SetDirtyKeyCallback()`: 设置 dirty key 回调
-- `Manager.CheckWatchedKeys()`: 检查 watched keys 是否被修改
-- `Manager.ClearWatchedDirty()`: EXEC 成功后清除 dirty 标记
-
-### 3.6 发布订阅机制
-
-```
-发布订阅架构:
-├── 频道订阅 (Channel Subscription)
-│   ├── SUBSCRIBE channel [channel ...]
-│   ├── UNSUBSCRIBE [channel ...]
-│   └── 消息格式: ["message", "channel", "payload"]
-│
-├── 模式订阅 (Pattern Subscription)
-│   ├── PSUBSCRIBE pattern [pattern ...]
-│   ├── PUNSUBSCRIBE [pattern ...]
-│   ├── 消息格式: ["pmessage", "pattern", "channel", "payload"]
-│   └── Glob 通配符: *, ?, []
-│
-└── 状态查询
-    ├── PUBSUB CHANNELS [pattern]    # 列出活跃频道
-    ├── PUBSUB NUMSUB [channel ...]  # 查看订阅数
-    └── PUBSUB NUMPAT                # 查看模式订阅数
-```
-
-**Pub/Sub 管理器**:
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     PubSub Manager                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Channel    │  │   Pattern    │  │ Connection   │     │
-│  │  Subscribers │  │  Subscribers │  │   Tracking   │     │
-│  │              │  │              │  │              │     │
-│  │ ch -> [Conn] │  │ pat -> [Conn]│  │ Conn->subs   │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**核心特性**:
-- **非持久化**: 消息即时投递，不存储
-- **多对多**: 一个频道多个订阅者，一个连接多个订阅
-- **模式匹配**: 支持 glob 通配符订阅
-- **线程安全**: 使用 RWMutex 保护订阅状态
-- **连接清理**: 连接断开时自动清理订阅
+**实现文件**: `internal/persistence/aof/`
 
 ---
 
-## 四、实现阶段划分
+## 七、RESP 协议
 
-### 阶段一: 基础框架 (Week 1-2)
-- [x] 项目脚手架搭建
-- [x] TCP 服务器实现
-- [x] RESP 协议编解码
-- [x] 命令分发框架
-- [x] 配置系统
+**RESP (REdis Serialization Protocol)** 数据类型:
 
-### 阶段二: 核心数据结构 (Week 3-5)
-- [x] String 类型及命令
-- [x] Hash 类型及命令
-- [x] List 类型及命令
-- [x] Set 类型及命令
-- [x] ZSet 类型及命令
-
-### 阶段三: 高级功能 (Week 6-7)
-- [x] 过期机制
-- [x] 淘汰策略
-- [x] 发布订阅
-- [x] 事务支持
-
-### 阶段四: 持久化 (Week 8)
-- [x] RDB 快照
-- [x] AOF 日志
-- [x] AOF 重写
-
-### 阶段五: 高级数据结构 (Week 9)
-- [x] Stream 流
-  - [x] StreamID 格式 (时间戳-序列号)
-  - [x] RadixTree 索引
-  - [x] 消费者组管理
-  - [x] XADD/XLEN/XRANGE/XREVRANGE/XREAD
-  - [x] XGROUP/XREADGROUP/XACK/XCLAIM
-  - [x] XDEL/XTRIM/XPENDING/XINFO
-- [x] Bitmap 位图
-  - [x] SETBIT/GETBIT 位操作
-  - [x] BITCOUNT 统计设置位
-  - [x] BITPOS 查找位位置
-  - [x] BITOP 位运算 (AND/OR/XOR/NOT)
-  - [x] BITFIELD 位字段操作
-- [x] HyperLogLog 基数估算
-  - [x] PFADD 添加元素
-  - [x] PFCOUNT 估算基数
-  - [x] PFMERGE 合并 HLL
-  - [x] 10-bit precision, 1024 registers
-- [x] Geo 地理位置
-  - [x] GEOADD 添加位置
-  - [x] GEODIST 计算距离
-  - [x] GEOHASH 获取 geohash
-  - [x] GEOPOS 获取坐标
-  - [x] GEORADIUS 半径查询
-  - [x] GEORADIUSBYMEMBER 成员半径查询
-  - [x] 52-bit geohash 编码
-  - [x] Haversine 距离公式
-
-### 阶段六: 优化与测试 (Week 10)
-- [ ] 性能优化
-- [ ] 单元测试
-- [ ] 集成测试
-- [ ] 压力测试
+| 类型 | 标识 | 格式示例 |
+|------|------|----------|
+| Simple Strings | `+` | `+OK\r\n` |
+| Errors | `-` | `-Error message\r\n` |
+| Integers | `:` | `:1000\r\n` |
+| Bulk Strings | `$` | `$5\r\nhello\r\n` |
+| Arrays | `*` | `*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n` |
 
 ---
 
-## 五、配置文件设计
+## 八、实现进度与问题
 
-配置文件位于 `config/godis.conf`，包含以下主要配置:
+### 8.1 已完成功能 ✅
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 项目框架 | ✅ | 目录结构、配置系统、构建工具 |
+| 网络层 | ✅ | TCP 服务器、连接管理 |
+| RESP 协议 | ✅ | 完整的 RESP2 编解码 |
+| 命令系统 | ✅ | 分发器、执行器、156 个命令 |
+| 数据库核心 | ✅ | Dict、DBSelector、Object |
+| String | ✅ | int/embstr/raw 编码 |
+| Hash | ✅ | 完整命令支持 |
+| List | ✅ | 完整命令支持 |
+| Set | ✅ | 完整命令支持 |
+| ZSet | ✅ | 跳表 + 完整命令支持 |
+| Stream | ✅ | RadixTree + 消费者组 |
+| Bitmap | ✅ | 位操作、位运算 |
+| HyperLogLog | ✅ | MurmurHash2 基数估算 |
+| Geo | ✅ | Geohash + Haversine |
+| 过期机制 | ✅ | 时间轮 + 主动/被动过期 |
+| 淘汰策略 | ✅ | LRU/LFU/TTL/Random |
+| 发布订阅 | ✅ | 频道 + 模式订阅 |
+| 事务 | ✅ | MULTI/EXEC + WATCH 乐观锁 |
+| RDB 持久化 | ✅ | 编码/解码 + CRC64 |
+| AOF 持久化 | ✅ | 追加 + 重写 |
+| Lua 脚本 | ✅ | EVAL/EVALSHA/SCRIPT |
+
+### 8.2 已修复 Bug
+
+| Bug | 描述 | 修复时间 |
+|-----|------|----------|
+| ZADD 参数解析 | `break` 只跳出 `switch` 而非 `for` 循环 | 2026-02-27 |
+| Dict rehash | rehash 索引越界访问 | 2026-02-28 |
+| HyperLogLog 哈希 | FNV-1a 对小输入碰撞严重，改用 MurmurHash2 | 2026-02-28 |
+| HyperLogLog alpha | alpha 系数计算公式错误 | 2026-02-28 |
+| RDB Stream | Stream 类型未处理导致 SAVE 失败 | 2026-02-28 |
+| RDB List/Hash | 解码器类型断言问题 | 2026-02-28 |
+
+### 8.3 已知问题
+
+| 问题 | 描述 | 严重程度 |
+|-----|------|----------|
+| 并发竞态 | 高并发时偶发性丢失数据 (10 个并发 SET 只有 8-9 个成功) | 中 |
+
+**并发竞态详情**:
+```bash
+# 测试用例
+for i in {1..10}; do redis-cli SET key$i value$i & done
+wait
+redis-cli DBSIZE  # 可能返回 8-9 而非 10
+```
+
+**解决方案**: 需要实现更细粒度的锁机制或使用 `sync.Map` 优化。
+
+---
+
+## 九、配置文件
+
+配置文件位于 `config/godis.conf`：
 
 ```conf
 # 网络配置
@@ -595,59 +517,42 @@ appendfsync everysec
 no-appendfsync-on-rewrite no
 auto-aof-rewrite-percentage 100
 auto-aof-rewrite-min-size 64mb
-
-# 慢查询配置
-slowlog-log-slower-than 10000
-slowlog-max-len 128
-
-# 高级配置
-hash-max-ziplist-entries 512
-hash-max-ziplist-value 64
-list-max-ziplist-size -2
-list-compress-depth 0
-set-max-intset-entries 512
-zset-max-ziplist-entries 128
-zset-max-ziplist-value 64
 ```
 
 ---
 
-## 六、关键技术点
+## 十、关键技术点
 
-### 6.1 跳表 (SkipList) 实现
+### 10.1 跳表 (SkipList)
 
 ZSet 的核心数据结构，支持 O(log N) 的插入、删除、查找操作。
 
 ```
-          +------------+
-          |  Header    |
-          +-----+------+
-                |
-       Level 3:  1 ------------------>  NULL
-                |                        ^
-       Level 2:  1 -------> 4 ------->  6 -> NULL
-                |           |            ^
-       Level 1:  1 -------> 4 ------->  6 -> NULL
-                |           |            |
-       Level 0:  1 --> 3 -> 4 -> 5 ->  6 -> NULL
+        Level 3:  1 ------------------> NULL
+                  |                        ^
+        Level 2:  1 -------> 4 ------->  6 -> NULL
+                  |           |            ^
+        Level 1:  1 -------> 4 ------->  6 -> NULL
+                  |           |            |
+        Level 0:  1 --> 3 -> 4 -> 5 ->  6 -> NULL
 ```
 
-### 6.2 时间轮 (Time Wheel) 实现
+### 10.2 时间轮 (Time Wheel)
 
 用于高效的过期时间管理。
 
 ```
-          +----------------------------------+
-          |         Time Wheel               |
-          |  +----+----+----+----+----+     |
-          |  | 1s | 2s | 3s |... | 60s|     |
-          |  +----+----+----+----+----+     |
-          |   ↓    ↓    ↓    ↓    ↓        |
-          |  [k] [k] [k] [k] [k]  [k]      |
-          +----------------------------------+
++----------------------------------+
+|         Time Wheel               |
+|  +----+----+----+----+----+      |
+|  | 1s | 2s | 3s |... | 60s|      |
+|  +----+----+----+----+----+      |
+|   ↓    ↓    ↓    ↓    ↓         |
+|  [k] [k] [k] [k] [k]  [k]       |
++----------------------------------+
 ```
 
-### 6.3 并发控制
+### 10.3 并发控制
 
 - 使用 `sync.RWMutex` 保护数据结构
 - 连接级锁避免全局锁竞争
@@ -655,612 +560,21 @@ ZSet 的核心数据结构，支持 O(log N) 的插入、删除、查找操作�
 
 ---
 
-## 七、Lua 脚本支持设计
-
-使用 `github.com/yuin/gopher-lua` 作为 Lua 解释器：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Lua Script Engine                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │  Lua VM Pool │  │ Script Cache │  │  Sandbox     │     │
-│  │  (并发安全)  │  │  (SHA1 缓存)  │  │  (安全限制)  │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Lua API 暴露
-
-```lua
--- Redis 命令调用
-redis.call(command, ...)
-redis.pcall(command, ...)
-
--- 返回值处理
-redis.error_reply(error)
-redis.status_reply(status)
-redis.log(level, message)
-```
-
----
-
-## 八、高性能优化策略
-
-### 8.1 内存优化
-
-```
-编码优化:
-├── int 编码: 小整数直接存储,避免分配
-├── embstr: 小字符串内联存储 (< 44字节)
-├── ziplist: 压缩列表减少指针开销
-└── intset: 整数集合避免哈希表开销
-```
-
-### 8.2 并发优化
-
-```
-并发策略:
-├── 连接池: 每个连接独立处理,避免全局锁
-├── 读写锁: 读多写少场景使用 RWMutex
-├── 分片锁: 大数据结构使用分片锁
-└── 无锁结构: 计数器等使用 atomic
-```
-
-### 8.3 I/O 优化
-
-```
-网络优化:
-├── epoll/kqueue: 高效事件循环
-├── 读写缓冲: 减少系统调用
-├── 批量回复: 管道支持
-└── 零拷贝: 尽可能减少内存拷贝
-```
-
----
-
-## 九、Stream 实现设计 ✅
-
-### 9.1 Stream 数据结构
-
-```
-Stream 结构:
-┌─────────────────────────────────────────────────────────┐
-│  entries []*StreamEntry (按ID顺序存储)                     │
-│  lastID StreamID (最后生成的ID)                           │
-│  length int64 (消息数量)                                  │
-│  radixTree *RadixTree (基数树索引)                        │
-│  cgroups *ConsumerGroupManager (消费者组管理)              │
-└─────────────────────────────────────────────────────────┘
-
-StreamEntry 结构:
-┌─────────────────────────────────────────────────────────┐
-│  ID StreamID (时间戳-序列号)                              │
-│  Fields map[string]string (消息字段)                      │
-└─────────────────────────────────────────────────────────┘
-
-StreamID 格式: <millisecondsTimestamp>-<sequenceNumber>
-例如: 1234567890-0
-```
-
-**实现要点:**
-1. **RadixTree 索引**: 使用基数树按 ID 前缀快速查找消息
-2. **顺序存储**: entries 数组按 ID 顺序存储，支持二分查找
-3. **消费者组**: 支持多消费者组，每个组维护最后投递 ID 和待处理消息
-4. **ID 生成**: 支持自动生成 (`*`) 和手动指定 ID
-
-### 9.2 Stream 核心命令 ✅
-
-| 命令 | 功能 | 状态 |
-|------|------|------|
-| XADD | 添加消息到流 | ✅ |
-| XLEN | 获取消息数量 | ✅ |
-| XRANGE | 获取范围消息 | ✅ |
-| XREVRANGE | 反向获取消息 | ✅ |
-| XREAD | 从多个流读取消息 | ✅ |
-| XDEL | 删除消息 | ✅ |
-| XTRIM | 裁剪流到指定长度 | ✅ |
-| XGROUP | 管理消费者组 | ✅ |
-| XREADGROUP | 消费者组读取消息 | ✅ |
-| XACK | 确认消息处理完成 | ✅ |
-| XCLAIM | 转移消息所有权 | ✅ |
-| XPENDING | 查看待处理消息 | ✅ |
-| XINFO | 查看流/组/消费者信息 | ✅ |
-
-### 9.3 实现文件
-
-| 文件 | 说明 |
-|------|------|
-| `internal/datastruct/stream/stream.go` | Stream 核心数据结构和操作 |
-| `internal/datastruct/stream/radix_tree.go` | RadixTree 索引实现 |
-| `internal/datastruct/stream/consumer.go` | 消费者和消费者组管理 |
-| `internal/command/commands/stream.go` | Stream 命令处理 |
-| `internal/database/object.go` | Stream 对象类型支持 |
-
----
-
-## 十、Bitmap 实现设计 ✅
-
-### 10.1 Bitmap 数据结构
-
-Bitmap 是基于 String 类型的扩展，将字符串的每一位作为一个独立的布尔值。
-
-```
-Bitmap 结构 (基于 String):
-┌─────────────────────────────────────────────────────────┐
-│  String: "hello" (ASCII: 0x68 0x65 0x6c 0x6c 0x6f)       │
-│                                                          │
-│  Bit 0-7:   0x68 = 01101000  (h)                        │
-│  Bit 8-15:  0x65 = 01100101  (e)                        │
-│  Bit 16-23: 0x6c = 01101100  (l)                        │
-│  Bit 24-31: 0x6c = 01101100  (l)                        │
-│  Bit 32-39: 0x6f = 01101111  (o)                        │
-└─────────────────────────────────────────────────────────┘
-```
-
-**实现要点:**
-1. **位寻址**: `offset = byteIndex * 8 + bitIndex`
-2. **自动扩展**: SETBIT 超出当前长度时自动填充零字节
-3. **高效统计**: BITCOUNT 使用查表法或 Brian Kernighan 算法
-
-### 10.2 Bitmap 核心命令 ✅
-
-| 命令 | 功能 | 状态 |
-|------|------|------|
-| SETBIT | 设置指定位的值 (0/1) | ✅ |
-| GETBIT | 获取指定位的值 | ✅ |
-| BITCOUNT | 统计设置为 1 的位数 | ✅ |
-| BITPOS | 查找第一个指定位的位置 | ✅ |
-| BITOP | 位运算 (AND/OR/XOR/NOT) | ✅ |
-| BITFIELD | 位字段操作 (GET/SET/INCRBY) | ✅ |
-| BITFIELD_RO | 只读位字段操作 | ✅ |
-
-**BITFIELD 编码格式:**
-```
-<encoding>: i<u|s><bits>  # 无符号/有符号整数
-  - u8:  8位无符号 (0-255)
-  - i16: 16位有符号 (-32768~32767)
-  - i32: 32位有符号
-  - i64: 64位有符号
-
-<offset>: #<num> | <offset>
-  - #0: 从位置 0 开始
-  - #1: 从位置 4 开始 (4字节对齐)
-  - 10: 从位置 10 开始
-```
-
-### 10.3 BITOP 操作示例
-
-```
-BITOP AND dest key1 key2
-  ┌─────────┐         ┌─────────┐
-  │  key1   │   AND   │  key2   │
-  │  0xAA   │   ----> │  0x55   │
-  │ 10101010│         │ 01010101│
-  └─────────┘         └─────────┘
-         │                   │
-         └────────┬──────────┘
-                  ▼
-          ┌─────────┐
-          │  dest   │
-          │  0x00   │
-          │ 00000000│
-          └─────────┘
-```
-
-### 10.4 实现文件
-
-| 文件 | 说明 |
-|------|------|
-| `internal/datastruct/string/string.go` | String 类型含位操作方法 (GetBit/SetBit/BitCount/BitOp) |
-| `internal/command/commands/bitmap.go` | Bitmap 命令处理 |
-
----
-
-## 十一、HyperLogLog 实现设计 ✅
-
-### 11.1 HyperLogLog 算法原理
-
-HyperLogLog 是一种概率数据结构，用于估算集合的基数（不重复元素数量），使用极少内存。
-
-```
-HyperLogLog 结构:
-┌─────────────────────────────────────────────────────────┐
-│  registers [1024]uint8  // 1024个寄存器 (10-bit 精度)   │
-│                                                          │
-│  每个寄存器存储: 该位置对应哈希值的最大前导零数 + 1       │
-│                                                          │
-│  哈希函数: FNV-1a (64-bit)                               │
-│  索引计算: hash >> (64 - 10) = registers[0..1023]       │
-│  前导零: countLeadingZeros(hash << 10) + 1              │
-└─────────────────────────────────────────────────────────┘
-```
-
-**基数估算公式:**
-```
-RAW = α * m² / (Σ 2^(-register[i]))
-
-其中:
-- m = 1024 (寄存器数量)
-- α ≈ 0.673 (修正系数)
-- 当基数较小时使用线性计数
-- 当基数较大时应用大范围修正
-```
-
-**内存占用:**
-```
-1024 registers × 1 byte = 1 KB
-可估算最多约 2^64 个元素的基数
-标准误差率: < 1%
-```
-
-### 11.2 HyperLogLog 核心命令 ✅
-
-| 命令 | 功能 | 状态 |
-|------|------|------|
-| PFADD | 添加元素到 HLL | ✅ |
-| PFCOUNT | 估算基数 | ✅ |
-| PFMERGE | 合并多个 HLL | ✅ |
-
-### 11.3 HyperLogLog 操作流程
-
-```
-PFADD hll element
-│
-├── 1. 计算 hash = FNV1a(element) % 2^64
-│
-├── 2. 获取索引: index = hash >> (64 - 10)
-│
-├── 3. 计算前导零: ρ = countLeadingZeros(hash << 10) + 1
-│
-├── 4. 更新寄存器: registers[index] = max(registers[index], ρ)
-│
-└── 5. 返回是否修改 (1=新元素, 0=已存在)
-
-PFCOUNT hll
-│
-├── 1. 读取所有 1024 个寄存器值
-│
-├── 2. 计算 sum = Σ 2^(-register[i])
-│
-├── 3. 应用修正公式得到估算值
-│
-└── 4. 返回基数 (int64)
-
-PFMERGE dest hll1 hll2 ...
-│
-├── 对每个索引 i:
-│   │
-│   └── dest.registers[i] = max(hll1.registers[i], hll2.registers[i], ...)
-│
-└── 返回 OK
-```
-
-### 11.4 实现文件
-
-| 文件 | 说明 |
-|------|------|
-| `internal/datastruct/hyperloglog/hll.go` | HyperLogLog 核心算法实现 |
-| `internal/command/commands/hyperloglog.go` | HyperLogLog 命令处理 |
-
-### 11.5 精度与误差
-
-| 元素数量 | 实际基数 | 估算基数 | 误差率 |
-|----------|----------|----------|--------|
-| 100 | 100 | ~100 | < 1% |
-| 1,000 | 1,000 | ~1,000 | < 1% |
-| 10,000 | 10,000 | ~10,000 | < 1% |
-| 100,000 | 100,000 | ~99,500 | < 1% |
-| 1,000,000 | 1,000,000 | ~1,002,000 | < 1% |
-
----
-
-## 十二、Geo 实现设计 ✅
-
-### 12.1 Geo 数据结构
-
-Geo 地理位置数据结构基于 ZSet 实现，使用 Geohash 编码将经纬度转换为 ZSet 的分数。
-
-```
-Geo 结构 (基于 ZSet):
-┌─────────────────────────────────────────────────────────┐
-│  ZSet (sorted set)                                        │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ Member (string)  │  Score (geohash)               │   │
-│  ├─────────────────┼──────────────────────────────┤   │
-│  │ "Palermo"       │  1262084552082720              │   │
-│  │ "Catania"       │  1262094435601205              │   │
-│  └─────────────────┴──────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-
-Geohash 编码 (52-bit):
-┌─────────────────────────────────────────────────────────┐
-│  位交织: 经度 26 bit + 纬度 26 bit = 52 bit total       │
-│                                                          │
-│  经度范围: -180 ~ +180                                 │
-│  纬度范围: -85.05112878 ~ +85.05112878                  │
-│                                                          │
-│  编码步骤:                                                │
-│  1. 归一化: norm = (coord - min) / (max - min)            │
-│  2. 量化: quantized = uint64(norm * 2^26)                 │
-│  3. 交织: even_bits = lonBits, odd_bits = latBits         │
-└─────────────────────────────────────────────────────────┘
-```
-
-**实现要点:**
-1. **52-bit Geohash**: 经度 26 bit + 纬度 26 bit 交织存储
-2. **ZSet 存储**: 使用 ZSet 的 score 存储 geohash，member 存储地点名称
-3. **Haversine 公式**: 计算两点间的大圆距离
-4. **距离单位**: 支持 m/m/ft/km
-
-### 12.2 Geo 核心命令 ✅
-
-| 命令 | 功能 | 状态 |
-|------|------|------|
-| GEOADD | 添加地理位置 | ✅ |
-| GEODIST | 计算两点距离 | ✅ |
-| GEOHASH | 获取 geohash 字符串 | ✅ |
-| GEOPOS | 获取位置坐标 | ✅ |
-| GEORADIUS | 半径查询 | ✅ |
-| GEORADIUSBYMEMBER | 成员半径查询 | ✅ |
-
-**GEOADD 选项:**
-```
-NX: 只添加不存在的成员
-XX: 只更新已存在的成员
-CH: 返回修改的数量 (包括新增和更新)
-```
-
-**GEORADIUS 选项:**
-```
-WITHCOORD:  返回坐标
-WITHDIST:   返回距离
-WITHHASH:   返回原始 geohash
-COUNT n:    限制返回数量
-ASC/DESC:   排序方向
-STORE key:  结果存储到指定 ZSet
-STOREDIST key: 结果以距离为分数存储
-```
-
-### 12.3 Geohash 编码示例
-
-```
-经度: 13.361389  纬度: 38.115556 (Palermo)
-
-1. 归一化:
-   lonNorm = (13.361389 - (-180)) / 180 = 0.574229...
-   latNorm = (38.115556 - (-85.0511)) / 170.1022 = 0.72141...
-
-2. 量化 (26-bit):
-   lonVal = uint64(0.574229 * 2^26) = 40661674
-   latVal = uint64(0.72141 * 2^26) = 51056636
-
-3. 二进制:
-   lonBits = 000000001001001101011011101010 (26 bits)
-   latBits = 000000001100000101110111001100010 (26 bits)
-
-4. 交织:
-   geohash = 0000 0000 0100 0010 0110 0001 1001 0100 0111 1011 1000 1010
-   ↓       ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓
-   score = 1262084552082720
-```
-
-### 12.4 距离计算 (Haversine 公式)
-
-```
-Haversine 公式计算两点间的大圆距离:
-
-a = sin²(Δlat/2) + cos(lat1) × cos(lat2) × sin²(Δlon/2)
-c = 2 × atan2(√a, √(1-a))
-d = R × c
-
-其中:
-- R = 6372797.5608 米 (地球半径)
-- lat1, lat2: 两点纬度 (弧度)
-- lon1, lon2: 两点经度 (弧度)
-```
-
-### 12.5 实现文件
-
-| 文件 | 说明 |
-|------|------|
-| `internal/datastruct/geo/geohash.go` | Geohash 编码/解码、距离计算 |
-| `internal/command/commands/geo.go` | Geo 命令处理 |
-
-### 12.6 使用示例
+## 十一、编译与运行
 
 ```bash
-# 添加意大利城市位置
-redis-cli GEOADD Sicily 13.361389 38.115556 Palermo \
-                         15.087269 37.502669 Catania
+# 编译
+make build
 
-# 获取位置坐标
-redis-cli GEOPOS Sicily Palermo
-# 1) "13.36138665676117"
-# 2) "38.11555512813572"
+# 运行
+./bin/godis
 
-# 计算距离
-redis-cli GEODIST Sicily Palermo Catania km
-# "166.2742"
+# 带配置文件运行
+./bin/godis -c config/godis.conf
 
-# 查找 200km 范围内的城市
-redis-cli GEORADIUS Sicily 15 37 200 km WITHDIST
-# 1) "Catania"
-# 2) "56.4411"
-# 3) "Palermo"
-# 4) "190.4425"
+# 测试
+make test
+
+# 清理
+make clean
 ```
-
----
-
-## 十三、Lua 脚本模块
-
-### 13.1 Lua 脚本概述
-
-Godis 使用 [gopher-lua](https://github.com/yuin/gopher-lua) 解释器实现 Redis 兼容的 Lua 脚本功能。Lua 脚本提供了：
-- 原子性执行：脚本执行期间不会插入其他命令
-- 复杂操作：支持条件判断、循环、函数等编程特性
-- 性能优化：通过 SCRIPT LOAD 预加载脚本，减少网络传输
-
-### 13.2 核心命令
-
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| EVAL | `EVAL script numkeys key [key ...] arg [arg ...]` | 执行 Lua 脚本 |
-| EVALSHA | `EVALSHA sha1 numkeys key [key ...] arg [arg ...]` | 执行已缓存的脚本 |
-| SCRIPT LOAD | `SCRIPT LOAD script` | 加载脚本并返回 SHA1 |
-| SCRIPT EXISTS | `SCRIPT EXISTS sha1 [sha1 ...]` | 检查脚本是否存在 |
-| SCRIPT FLUSH | `SCRIPT FLUSH` | 清空脚本缓存 |
-| SCRIPT KILL | `SCRIPT KILL` | 终止脚本执行 |
-| SCRIPT SHOW | `SCRIPT SHOW sha1` | 显示脚本内容 |
-
-### 13.3 Lua 环境变量
-
-脚本执行时，可访问以下全局变量：
-
-```lua
-KEYS    -- Redis key 数组（由 numkeys 指定）
-ARGV    -- 参数数组（剩余的所有参数）
-redis   -- Redis API 对象
-```
-
-### 13.4 redis.call() API
-
-```lua
--- 执行 Redis 命令
-redis.call('SET', 'key', 'value')
-redis.call('GET', 'key')
-redis.call('INCR', 'counter')
-redis.call('DEL', 'key1', 'key2')
-
--- 带返回值
-local value = redis.call('GET', 'mykey')
-local count = redis.call('INCR', 'counter')
-```
-
-### 13.5 返回值类型转换
-
-| Lua 类型 | Redis 返回值 |
-|----------|-------------|
-| number | Integer Reply |
-| string | Bulk String Reply |
-| boolean | Integer Reply (1=true, 0=false) |
-| table | Array Reply |
-| nil | Nil Reply |
-
-### 13.6 脚本示例
-
-```lua
--- 简单返回
-return "hello world"
-
--- 使用 KEYS 和 ARGV
-return {KEYS[1], ARGV[1], ARGV[2]}
-
--- 条件判断
-if redis.call('EXISTS', KEYS[1]) == 1 then
-    return redis.call('GET', KEYS[1])
-else
-    return "not found"
-end
-
--- 循环
-local sum = 0
-for i = 1, 10 do
-    sum = sum + i
-end
-return sum
-
--- 使用 redis.call 复杂操作
-local current = redis.call('GET', KEYS[1])
-if current == false then
-    current = 0
-end
-redis.call('SET', KEYS[1], current + ARGV[1])
-return current + ARGV[1]
-```
-
-### 13.7 实现文件
-
-| 文件 | 说明 |
-|------|------|
-| `internal/script/manager.go` | ScriptManager、Lua 状态管理、redis.call 实现 |
-| `internal/command/commands/script.go` | EVAL/EVALSHA/SCRIPT 命令处理 |
-
-### 13.8 ScriptManager 结构
-
-```go
-type ScriptManager struct {
-    mu      sync.RWMutex
-    scripts map[string]string // SHA1 -> script content
-}
-
-type LuaContext struct {
-    L           *lua.LState
-    DB          *database.DB
-    Conn        interface{}
-    NumReplies  int
-    Keys        []string
-    Flags       []string
-    ConvertedTo map[interface{}]interface{}
-}
-```
-
-### 13.9 执行流程
-
-```
-EVAL/EVALSHA 请求
-      │
-      ▼
-┌─────────────────┐
-│ 解析参数        │
-│ script/keys/args│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 创建 Lua State  │
-│ 注册 redis API  │
-│ 设置 KEYS/ARGV  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 编译并执行脚本  │
-│ L.DoString()    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 获取返回值      │
-│ L.Get(-1)       │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 转换为 Reply    │
-│ 返回客户端      │
-└─────────────────┘
-```
-
-### 13.10 使用示例
-
-```bash
-# EVAL 基本用法
-redis-cli EVAL "return 'hello'" 0
-# "hello"
-
-# 使用 redis.call
-redis-cli EVAL "return redis.call('SET', 'k', 'v')" 0
-# OK
-
-# KEYS 和 ARGV
-redis-cli EVAL "return {KEYS[1], ARGV[1]}" 1 mykey arg1
-# 1) "mykey"
-# 2) "arg1"
-
-# SCRIPT LOAD + EVALSHA
-SHA1=$(redis-cli SCRIPT LOAD "return 42")
-redis-cli EVALSHA "$SHA1" 0
-# "42"
-```
-

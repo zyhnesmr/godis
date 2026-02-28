@@ -368,7 +368,9 @@ func (d *Decoder) readHashValue() (*database.Object, error) {
 		return nil, err
 	}
 
-	hash := database.NewHashObject()
+	// Collect field-value pairs first
+	fields := make([]string, 0, length)
+	values := make([]string, 0, length)
 
 	for i := 0; i < int(length); i++ {
 		field, err := d.readString()
@@ -379,18 +381,26 @@ func (d *Decoder) readHashValue() (*database.Object, error) {
 		if err != nil {
 			return nil, err
 		}
+		fields = append(fields, field)
+		values = append(values, value)
+	}
 
-		hashInt, _ := hash.GetHash()
-		type hashSetter interface {
-			Set(field, value string) int
-		}
+	// Create hash from pairs
+	hashObj := database.NewHashObject()
+	hashPtr, _ := hashObj.GetHash()
 
-		if h, ok := hashInt.(hashSetter); ok {
-			h.Set(field, value)
+	// Type assert to hash implementation
+	type hashSetter interface {
+		Set(field, value string) int
+	}
+
+	if h, ok := hashPtr.(hashSetter); ok {
+		for i := range fields {
+			h.Set(fields[i], values[i])
 		}
 	}
 
-	return hash, nil
+	return hashObj, nil
 }
 
 // readListValue reads a list value
@@ -402,20 +412,23 @@ func (d *Decoder) readListValue() (*database.Object, error) {
 
 	list := database.NewListObject()
 
+	// Get the actual list implementation
+	type listImpl interface {
+		PushRight(string)
+	}
+
+	listPtr, ok := list.Ptr.(listImpl)
+	if !ok {
+		return nil, fmt.Errorf("list does not implement PushRight method")
+	}
+
 	for i := 0; i < int(length); i++ {
 		elem, err := d.readString()
 		if err != nil {
 			return nil, err
 		}
 
-		listInt, _ := list.Ptr.(interface{})
-		type listAdder interface {
-			PushRight(string) int
-		}
-
-		if l, ok := listInt.(listAdder); ok {
-			l.PushRight(elem)
-		}
+		listPtr.PushRight(elem)
 	}
 
 	return list, nil
