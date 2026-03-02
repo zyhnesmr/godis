@@ -75,14 +75,18 @@ func (db *DB) Get(key string) (*Object, bool) {
 		return obj.(*Object), true
 	}
 
-	// Key is expired, upgrade to write lock for lazy deletion
+	// Key is expired - store the object reference for comparison
+	oldObj := obj
 	db.mu.RUnlock()
+
+	// Upgrade to write lock for lazy deletion
 	db.mu.Lock()
 
 	// Double-check after acquiring write lock
+	// Check if the key is still expired AND the object is the same (not replaced by another goroutine)
 	obj, ok = db.dict.Get(key)
-	if ok && db.isExpiredLocked(key) {
-		// Lazy delete the expired key
+	if ok && db.isExpiredLocked(key) && obj == oldObj {
+		// Lazy delete the expired key (only if not replaced by another goroutine)
 		db.dict.Delete(key)
 		db.expires.Delete(key)
 		db.keysCount--
@@ -90,7 +94,7 @@ func (db *DB) Get(key string) (*Object, bool) {
 		return nil, false
 	}
 
-	// Key was refreshed or deleted by another goroutine
+	// Key was refreshed, replaced by another goroutine, or deleted
 	defer db.mu.Unlock()
 	if ok {
 		return obj.(*Object), true
@@ -103,8 +107,15 @@ func (db *DB) Set(key string, value *Object) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	// Check if key exists and is not expired
-	wasNew := !db.dict.Exists(key) || db.isExpiredLocked(key)
+	// If key is expired, delete it first to ensure correct counting
+	if db.isExpiredLocked(key) {
+		db.dict.Delete(key)
+		db.expires.Delete(key)
+		db.keysCount--
+	}
+
+	// Check if key exists (after potential deletion of expired key)
+	wasNew := !db.dict.Exists(key)
 	db.dict.Set(key, value)
 
 	if wasNew {
@@ -119,8 +130,16 @@ func (db *DB) SetNX(key string, value *Object) bool {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	// If key exists and is not expired, return false
 	if db.dict.Exists(key) && !db.isExpiredLocked(key) {
 		return false
+	}
+
+	// Key doesn't exist or is expired - delete expired key if present
+	if db.isExpiredLocked(key) {
+		db.dict.Delete(key)
+		db.expires.Delete(key)
+		db.keysCount--
 	}
 
 	db.dict.Set(key, value)
@@ -150,12 +169,18 @@ func (db *DB) Delete(keys ...string) int {
 
 	deleted := 0
 	for _, key := range keys {
-		if db.dict.Exists(key) {
+		// Check if key exists and is not expired
+		if db.dict.Exists(key) && !db.isExpiredLocked(key) {
 			db.dict.Delete(key)
 			db.expires.Delete(key)
 			db.keysCount--
 			deleted++
 			db.markDirty(key)
+		} else {
+			// Key doesn't exist or is expired, clean up expires if present
+			if _, ok := db.expires.Get(key); ok {
+				db.expires.Delete(key)
+			}
 		}
 	}
 
@@ -404,17 +429,7 @@ func (db *DB) FlushDB() {
 	db.keysCount = 0
 }
 
-// isExpired checks if a key is expired (without holding lock)
-func (db *DB) isExpired(key string) bool {
-	exp, ok := db.expires.Get(key)
-	if !ok {
-		return false
-	}
-
-	return exp.(int64) <= time.Now().Unix()
-}
-
-// isExpiredLocked checks if a key is expired (with lock held)
+// isExpiredLocked checks if a key is expired (with db.mu lock held)
 func (db *DB) isExpiredLocked(key string) bool {
 	exp, ok := db.expires.Get(key)
 	if !ok {

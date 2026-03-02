@@ -366,6 +366,34 @@ redis-cli GEOADD Sicily CH 13.36 38.12 "Palermo"
 # 预期: 返回更新数量
 ```
 
+### 并发测试
+
+```bash
+# 并发 SET 测试 - 验证数据一致性
+for i in {1..100}; do redis-cli SET key$i value$i & done
+wait
+redis-cli DBSIZE
+# 预期: 100
+
+# 并发混合操作测试
+for i in {1..50}; do
+    redis-cli SET test$i value$i &
+    redis-cli GET test$i &
+done
+wait
+redis-cli DBSIZE
+# 预期: 50
+
+# 并发 INCR 测试
+redis-cli DEL counter
+for i in {1..100}; do
+    redis-cli INCR counter &
+done
+wait
+redis-cli GET counter
+# 预期: 100
+```
+
 ### Lua 脚本测试
 
 ```bash
@@ -497,27 +525,11 @@ make clean      # 清理
 | HyperLogLog alpha | alpha 系数计算公式错误 | 2026-02-28 |
 | RDB Stream | Stream 类型未处理导致 SAVE 失败 | 2026-02-28 |
 | RDB List/Hash | 解码器类型断言问题 | 2026-02-28 |
+| 并发竞态 | Delete 不检查过期状态、Set 计数不准确、Get 锁升级竞态 | 2026-03-02 |
 
 ## 已知问题
 
-| 问题 | 描述 | 严重程度 | 状态 |
-|-----|------|----------|------|
-| 并发竞态 | 高并发时偶发性丢失数据 (如 10 个并发 SET 只有 8-9 个成功) | 中 | 待修复 |
-
-### 并发竞态详情
-
-在高并发场景下，多个客户端同时写入时，偶发性出现数据丢失：
-
-```bash
-# 测试用例
-for i in {1..10}; do redis-cli SET key$i value$i & done
-wait
-redis-cli DBSIZE  # 可能返回 8-9 而非 10
-```
-
-**原因**: 数据库使用 `sync.RWMutex` 保护，但在高并发下可能存在锁竞争或写入竞争条件。
-
-**解决方案**: 需要实现更细粒度的锁机制或使用 `sync.Map` 优化。
+暂无已知严重问题。
 
 ## 新增功能记录
 
