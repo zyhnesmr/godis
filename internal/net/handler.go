@@ -82,7 +82,9 @@ func (h *DefaultHandler) Handle(ctx context.Context, conn *Conn) {
 		}
 		_ = conn.WriteRESP(response)
 
-		// Flush response
+		// Flush response after each command
+		// This works for pipeline as well - client sends multiple commands,
+		// server processes and flushes each response
 		if err := conn.Flush(); err != nil {
 			return
 		}

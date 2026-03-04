@@ -39,11 +39,18 @@ func NewParser(reader io.Reader) *Parser {
 
 // ReadLine reads a line ending with \r\n
 func (p *Parser) ReadLine() (string, error) {
+	// ReadString reads until \n, so we should get \r\n if data is complete
 	line, err := p.reader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
-	if len(line) < 2 || line[len(line)-2] != '\r' {
+	if len(line) < 2 {
+		return "", ErrCRLFExpected
+	}
+	if line[len(line)-1] != '\n' {
+		return "", ErrCRLFExpected
+	}
+	if line[len(line)-2] != '\r' {
 		return "", ErrCRLFExpected
 	}
 	return line[:len(line)-2], nil
@@ -54,21 +61,23 @@ func (p *Parser) ReadBytes(n int) ([]byte, error) {
 	if n < 0 {
 		return nil, ErrInvalidLength
 	}
-	buf := make([]byte, n)
-	_, err := io.ReadFull(p.reader, buf)
+
+	// Read all n bytes followed by \r\n
+	buf := make([]byte, n+2) // n bytes + \r\n
+	nRead, err := io.ReadFull(p.reader, buf)
 	if err != nil {
 		return nil, err
 	}
-	// Read trailing \r\n
-	crlf := make([]byte, 2)
-	_, err = io.ReadFull(p.reader, crlf)
-	if err != nil {
-		return nil, err
+	if nRead != n+2 {
+		return nil, fmt.Errorf("%w: expected %d bytes, got %d", ErrIncomplete, n+2, nRead)
 	}
-	if crlf[0] != '\r' || crlf[1] != '\n' {
+
+	// Verify CRLF
+	if buf[n] != '\r' || buf[n+1] != '\n' {
 		return nil, ErrCRLFExpected
 	}
-	return buf, nil
+
+	return buf[:n], nil
 }
 
 // Parse reads and parses a single RESP message
