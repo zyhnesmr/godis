@@ -248,6 +248,9 @@ func registerCommands(disp *command.Dispatcher, dbSelector *database.DBSelector,
 	// Register key commands
 	commands.RegisterKeyCommands(disp)
 
+	// Register object/memory commands
+	commands.RegisterObjectCommands(disp)
+
 	// Register string commands
 	commands.RegisterStringCommands(disp)
 

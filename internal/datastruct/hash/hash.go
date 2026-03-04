@@ -255,23 +255,36 @@ func (h *Hash) Scan(cursor int, count int, pattern string) (int, []string) {
 		dataKeys = append(dataKeys, k)
 	}
 
+	// Filter by pattern first
+	var filteredKeys []string
+	if pattern == "*" {
+		filteredKeys = dataKeys
+	} else {
+		filteredKeys = make([]string, 0)
+		for _, k := range dataKeys {
+			if matchPattern(k, pattern) {
+				filteredKeys = append(filteredKeys, k)
+			}
+		}
+	}
+
 	// Simple cursor-based iteration
 	if cursor < 0 {
 		cursor = 0
 	}
 
-	if cursor >= len(dataKeys) {
+	if cursor >= len(filteredKeys) {
 		return 0, nil
 	}
 
 	end := cursor + count
-	if end > len(dataKeys) {
-		end = len(dataKeys)
+	if end > len(filteredKeys) {
+		end = len(filteredKeys)
 	}
 
-	keys = dataKeys[cursor:end]
+	keys = filteredKeys[cursor:end]
 	newCursor := end
-	if newCursor >= len(dataKeys) {
+	if newCursor >= len(filteredKeys) {
 		newCursor = 0
 	}
 
@@ -306,4 +319,52 @@ func (h *Hash) Size() int64 {
 	// Add overhead for map structure
 	size += int64(len(h.data)) * 16
 	return size
+}
+
+// matchPattern checks if a field matches a glob pattern
+func matchPattern(field, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+
+	// Handle *pattern* (contains)
+	if len(pattern) > 1 && pattern[0] == '*' && pattern[len(pattern)-1] == '*' {
+		sub := pattern[1 : len(pattern)-1]
+		return contains(field, sub)
+	}
+
+	// Handle pattern* (prefix)
+	if pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(field) >= len(prefix) && field[:len(prefix)] == prefix
+	}
+
+	// Handle *pattern (suffix)
+	if pattern[0] == '*' {
+		suffix := pattern[1:]
+		return len(field) >= len(suffix) && field[len(field)-len(suffix):] == suffix
+	}
+
+	return field == pattern
+}
+
+// contains checks if substr is in s
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && findContains(s, substr)
+}
+
+func findContains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }

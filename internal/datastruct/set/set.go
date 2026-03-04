@@ -403,7 +403,7 @@ func (s *Set) Clear() {
 }
 
 // Scan iterates over members with cursor
-func (s *Set) Scan(cursor int, count int) (int, []string) {
+func (s *Set) Scan(cursor int, count int, pattern string) (int, []string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -412,22 +412,35 @@ func (s *Set) Scan(cursor int, count int) (int, []string) {
 		members = append(members, member)
 	}
 
+	// Filter by pattern first
+	var filteredMembers []string
+	if pattern == "*" {
+		filteredMembers = members
+	} else {
+		filteredMembers = make([]string, 0)
+		for _, m := range members {
+			if matchPattern(m, pattern) {
+				filteredMembers = append(filteredMembers, m)
+			}
+		}
+	}
+
 	if cursor < 0 {
 		cursor = 0
 	}
 
-	if cursor >= len(members) {
+	if cursor >= len(filteredMembers) {
 		return 0, nil
 	}
 
 	end := cursor + count
-	if end > len(members) {
-		end = len(members)
+	if end > len(filteredMembers) {
+		end = len(filteredMembers)
 	}
 
-	result := members[cursor:end]
+	result := filteredMembers[cursor:end]
 	newCursor := end
-	if newCursor >= len(members) {
+	if newCursor >= len(filteredMembers) {
 		newCursor = 0
 	}
 
@@ -478,4 +491,52 @@ func (s *Set) ToSlice() []string {
 		result = append(result, member)
 	}
 	return result
+}
+
+// matchPattern checks if a member matches a glob pattern
+func matchPattern(member, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+
+	// Handle *pattern* (contains)
+	if len(pattern) > 1 && pattern[0] == '*' && pattern[len(pattern)-1] == '*' {
+		sub := pattern[1 : len(pattern)-1]
+		return contains(member, sub)
+	}
+
+	// Handle pattern* (prefix)
+	if pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(member) >= len(prefix) && member[:len(prefix)] == prefix
+	}
+
+	// Handle *pattern (suffix)
+	if pattern[0] == '*' {
+		suffix := pattern[1:]
+		return len(member) >= len(suffix) && member[len(member)-len(suffix):] == suffix
+	}
+
+	return member == pattern
+}
+
+// contains checks if substr is in s
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && findContains(s, substr)
+}
+
+func findContains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }

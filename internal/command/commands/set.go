@@ -829,8 +829,9 @@ func sscanCmd(ctx *command.Context) (*command.Reply, error) {
 
 	// Default values
 	count := 10
+	pattern := "*"
 
-	// Parse options (MATCH is ignored for now)
+	// Parse options
 	i := 2
 	for i < len(args) {
 		switch args[i] {
@@ -838,7 +839,7 @@ func sscanCmd(ctx *command.Context) (*command.Reply, error) {
 			if i+1 >= len(args) {
 				return nil, errors.New("syntax error")
 			}
-			// pattern = args[i+1] // Pattern not implemented yet
+			pattern = args[i+1]
 			i += 2
 		case "COUNT":
 			if i+1 >= len(args) {
@@ -856,9 +857,11 @@ func sscanCmd(ctx *command.Context) (*command.Reply, error) {
 
 	obj, ok := ctx.DB.Get(key)
 	if !ok {
-		// Empty set
-		result := []string{"0"}
-		return command.NewStringArrayReply(result), nil
+		// Empty set - return nested array: ["0", []]
+		resultArray := make([]*command.Reply, 2)
+		resultArray[0] = command.NewBulkStringReply("0")
+		resultArray[1] = command.NewStringArrayReply([]string{})
+		return command.NewArrayReply(resultArray), nil
 	}
 
 	if obj.Type != database.ObjTypeSet {
@@ -870,11 +873,12 @@ func sscanCmd(ctx *command.Context) (*command.Reply, error) {
 		return nil, errors.New("internal error: not a set object")
 	}
 
-	newCursor, members := s.Scan(cursor, count)
+	newCursor, members := s.Scan(cursor, count, pattern)
 
-	// Build result: [cursor, member1, member2, ...]
-	result := []string{strconv.Itoa(newCursor)}
-	result = append(result, members...)
+	// Build result as nested array: [cursor, [member1, member2, ...]]
+	resultArray := make([]*command.Reply, 2)
+	resultArray[0] = command.NewBulkStringReply(strconv.Itoa(newCursor))
+	resultArray[1] = command.NewStringArrayReply(members)
 
-	return command.NewStringArrayReply(result), nil
+	return command.NewArrayReply(resultArray), nil
 }

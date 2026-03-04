@@ -703,9 +703,11 @@ func hscanCmd(ctx *command.Context) (*command.Reply, error) {
 
 	obj, ok := ctx.DB.Get(key)
 	if !ok {
-		// Empty hash
-		result := []string{"0"}
-		return command.NewStringArrayReply(result), nil
+		// Empty hash - return nested array: ["0", []]
+		resultArray := make([]*command.Reply, 2)
+		resultArray[0] = command.NewBulkStringReply("0")
+		resultArray[1] = command.NewStringArrayReply([]string{})
+		return command.NewArrayReply(resultArray), nil
 	}
 
 	if obj.Type != database.ObjTypeHash {
@@ -719,14 +721,19 @@ func hscanCmd(ctx *command.Context) (*command.Reply, error) {
 
 	newCursor, fields := h.Scan(cursor, count, pattern)
 
-	// Build result: [cursor, field1, value1, field2, value2, ...]
-	result := []string{strconv.Itoa(newCursor)}
+	// Build result as nested array: [cursor, [field1, value1, field2, value2, ...]]
+	resultArray := make([]*command.Reply, 2)
+	resultArray[0] = command.NewBulkStringReply(strconv.Itoa(newCursor))
+
+	// Build field-value array
+	fieldValues := make([]string, 0, len(fields)*2)
 	for _, field := range fields {
 		val, _ := h.Get(field)
-		result = append(result, field, val)
+		fieldValues = append(fieldValues, field, val)
 	}
+	resultArray[1] = command.NewStringArrayReply(fieldValues)
 
-	return command.NewStringArrayReply(result), nil
+	return command.NewArrayReply(resultArray), nil
 }
 
 // HRANDFIELD key [count [WITHVALUES]]
